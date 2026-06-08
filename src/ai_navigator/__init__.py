@@ -22,7 +22,7 @@ from ai_navigator.schema.composer import SchemaComposer
 from ai_navigator.schema.extractor import ResultExtractor
 from ai_navigator.conf_parser.prompt import PromptBuilder
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # Core
