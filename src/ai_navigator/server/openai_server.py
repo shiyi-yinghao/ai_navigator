@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.exceptions import AuthenticationError, ProviderError, RateLimitError
-from ai_navigator.infra.models import ContentPart, Message, Response, TokenUsage
+from ai_navigator.infra.base_navigator import ContentPart, Message, Response, TokenUsage
 from ai_navigator.server.base_server import BaseServer
 
 
@@ -79,13 +79,13 @@ class OpenAIServer(BaseServer):
         except Exception as exc:
             _raise_openai_error(exc)
         choice = resp.choices[0]
-        return Response(
-            content=choice.message.content or "",
-            model=resp.model,
-            usage=_parse_usage(resp.usage),
-            finish_reason=choice.finish_reason,
-            raw=resp,
-        )
+        return {
+            "content": choice.message.content or "",
+            "model": resp.model,
+            "usage": _parse_usage(resp.usage),
+            "finish_reason": choice.finish_reason,
+            "raw": resp,
+        }
 
     def _response(self, messages: list[Message], **kwargs: Any) -> Response:
         """Structured output via ``response_format``.
@@ -112,28 +112,29 @@ class OpenAIServer(BaseServer):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _to_openai_message(msg: Message) -> dict[str, Any]:
-    if isinstance(msg.content, str):
-        return {"role": msg.role, "content": msg.content}
-    return {"role": msg.role, "content": [_part_to_openai(p) for p in msg.content]}
+    content = msg["content"]
+    if isinstance(content, str):
+        return {"role": msg["role"], "content": content}
+    return {"role": msg["role"], "content": [_part_to_openai(p) for p in content]}
 
 
 def _part_to_openai(part: ContentPart) -> dict[str, Any]:
-    if part.type == "text":
-        return {"type": "text", "text": part.text or ""}
-    if part.type == "image_url":
-        return {"type": "image_url", "image_url": {"url": part.image_url or ""}}
-    mt = part.media_type or "image/jpeg"
-    return {"type": "image_url", "image_url": {"url": f"data:{mt};base64,{part.image_data}"}}
+    if part["type"] == "text":
+        return {"type": "text", "text": part.get("text", "")}
+    if part["type"] == "image_url":
+        return {"type": "image_url", "image_url": {"url": part.get("image_url", "")}}
+    mt = part.get("media_type", "image/jpeg")
+    return {"type": "image_url", "image_url": {"url": f"data:{mt};base64,{part.get('image_data', '')}"}}
 
 
 def _parse_usage(usage: Any) -> TokenUsage | None:
     if usage is None:
         return None
-    return TokenUsage(
-        prompt_tokens=usage.prompt_tokens,
-        completion_tokens=usage.completion_tokens,
-        total_tokens=usage.total_tokens,
-    )
+    return {
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.total_tokens,
+    }
 
 
 def _raise_openai_error(exc: Exception) -> None:

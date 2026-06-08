@@ -19,6 +19,7 @@ Usage::
     api_key = creds.get("openai_api_key", "")
 """
 from __future__ import annotations
+import yaml
 from typing import Any
 
 from ai_navigator.infra.const_configs import ConstConfigs
@@ -50,7 +51,6 @@ class CredentialsLoader:
         """
         path = ConstConfigs.CREDENTIALS_PATH
         try:
-            import yaml  # lazy — yaml is a core dep but keep imports cheap
             with open(path, encoding="utf-8") as fh:
                 return yaml.safe_load(fh) or {}
         except FileNotFoundError:

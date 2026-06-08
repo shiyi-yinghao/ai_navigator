@@ -4,8 +4,8 @@ from abc import ABC
 from typing import Any, ClassVar, Iterator, Literal
 
 from ai_navigator.infra.exceptions import AINavigatorError, RateLimitError
-from ai_navigator.infra.logger import get_logger
-from ai_navigator.infra.models import Message, Response
+from ai_navigator.infra.base_navigator import Message, Response
+from ai_navigator.monitor.logger import get_logger
 
 
 class BaseServer(ABC):
@@ -40,10 +40,10 @@ class BaseServer(ABC):
         **kwargs: Any,
     ) -> None:
         self.model = model
-        self.credentials = credentials          # opaque; never parsed by BaseServer
+        self.credentials = credentials
         self._max_retries = max_retries
         self._retry_delay = retry_delay
-        self._conversation: list[Message] = []  # generic conversation state
+        self._conversation: list[Message] = []
         self.logger = get_logger(f"{self.provider}.{model}")
         self._setup(**kwargs)
 
@@ -64,12 +64,12 @@ class BaseServer(ABC):
         content: str,
     ) -> None:
         """Append a message to the current conversation."""
-        self._conversation.append(Message(role=role, content=content))
+        self._conversation.append({"role": role, "content": content})
 
     def set_system(self, text: str) -> None:
         """Replace (or insert) the system message at position 0."""
-        self._conversation = [m for m in self._conversation if m.role != "system"]
-        self._conversation.insert(0, Message.system(text))
+        self._conversation = [m for m in self._conversation if m["role"] != "system"]
+        self._conversation.insert(0, {"role": "system", "content": text})
 
     def reset_conversation(self) -> None:
         """Clear all messages from the current conversation."""
@@ -114,8 +114,8 @@ class BaseServer(ABC):
             "%s ok | model=%s finish=%s tokens=%s",
             method,
             self.model,
-            response.finish_reason,
-            response.usage,
+            response.get("finish_reason"),
+            response.get("usage"),
         )
         return response
 
@@ -128,11 +128,11 @@ class BaseServer(ABC):
     ) -> list[Message]:
         """Coerce a bare string or message list; prepend a system message if given."""
         if isinstance(messages, str):
-            msgs: list[Message] = [Message.user(messages)]
+            msgs: list[Message] = [{"role": "user", "content": messages}]
         else:
             msgs = list(messages)
         if system:
-            msgs = [Message.system(system), *msgs]
+            msgs = [{"role": "system", "content": system}, *msgs]
         return msgs
 
     def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Response:

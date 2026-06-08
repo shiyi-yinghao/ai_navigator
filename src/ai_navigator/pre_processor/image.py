@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from ai_navigator.infra.exceptions import PreProcessorError
-from ai_navigator.infra.models import ContentPart
+from ai_navigator.infra.base_navigator import ContentPart
 
 SUPPORTED_MIME_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/gif", "image/webp"}

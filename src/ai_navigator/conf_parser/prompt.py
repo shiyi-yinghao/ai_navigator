@@ -44,7 +44,7 @@ from typing import Any
 import yaml
 
 from ai_navigator.infra.exceptions import AINavigatorError
-from ai_navigator.infra.models import ContentPart, Message
+from ai_navigator.infra.base_navigator import ContentPart, Message
 
 
 class PromptError(AINavigatorError):
@@ -101,10 +101,10 @@ class PromptBuilder:
             role: str = block.get("role", "user")
             parts_spec: list[dict[str, Any]] = block.get("message", [])
             parts = self._build_parts(parts_spec, dd, block_idx=idx)
-            if len(parts) == 1 and parts[0].type == "text":
-                msg = Message(role=role, content=parts[0].text or "")  # type: ignore[arg-type]
+            if len(parts) == 1 and parts[0]["type"] == "text":
+                msg: Message = {"role": role, "content": parts[0].get("text", "")}
             else:
-                msg = Message(role=role, content=parts)  # type: ignore[arg-type]
+                msg = {"role": role, "content": parts}
             messages.append(msg)
         return messages
 
@@ -142,13 +142,12 @@ class PromptBuilder:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_content_part(kind: str, raw: Any) -> ContentPart:
-    """Convert a content kind + raw value to a ``ContentPart``."""
+    """Convert a content kind + raw value to a ``ContentPart`` dict."""
     if kind == "text":
-        return ContentPart(type="text", text=str(raw))
+        return {"type": "text", "text": str(raw)}
     if kind == "image_url":
-        return ContentPart(type="image_url", image_url=str(raw))
+        return {"type": "image_url", "image_url": str(raw)}
     if kind == "image_base64":
         data = raw if isinstance(raw, str) else (raw.decode() if isinstance(raw, bytes) else str(raw))
-        return ContentPart(type="image_base64", image_data=data)
-    # Unknown kind → fall back to plain text
-    return ContentPart(type="text", text=str(raw))
+        return {"type": "image_base64", "image_data": data}
+    return {"type": "text", "text": str(raw)}

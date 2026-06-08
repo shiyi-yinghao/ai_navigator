@@ -26,3 +26,11 @@ class ConstConfigs:
     CREDENTIALS_PATH: str = os.environ.get(
         "AI_NAVIGATOR_CREDENTIALS_PATH", "credentials.yaml"
     )
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    # When True, Navigator logs at every pipeline stage:
+    # request_receive → request_preprocess → request_executed → request_returned.
+    # Set AI_NAVIGATOR_LOGGING_STREAM=false to disable.
+    LOGGING_STREAM: bool = os.environ.get(
+        "AI_NAVIGATOR_LOGGING_STREAM", "true"
+    ).lower() != "false"

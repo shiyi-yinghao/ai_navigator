@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.exceptions import AuthenticationError, ProviderError, RateLimitError
-from ai_navigator.infra.models import ContentPart, Message, Response, TokenUsage
+from ai_navigator.infra.base_navigator import ContentPart, Message, Response, TokenUsage
 from ai_navigator.server.base_server import BaseServer
 
 
@@ -81,17 +81,17 @@ class AnthropicServer(BaseServer):
         content = "".join(
             block.text for block in resp.content if hasattr(block, "text")
         )
-        return Response(
-            content=content,
-            model=resp.model,
-            usage=TokenUsage(
-                prompt_tokens=resp.usage.input_tokens,
-                completion_tokens=resp.usage.output_tokens,
-                total_tokens=resp.usage.input_tokens + resp.usage.output_tokens,
-            ),
-            finish_reason=resp.stop_reason,
-            raw=resp,
-        )
+        return {
+            "content": content,
+            "model": resp.model,
+            "usage": {
+                "prompt_tokens": resp.usage.input_tokens,
+                "completion_tokens": resp.usage.output_tokens,
+                "total_tokens": resp.usage.input_tokens + resp.usage.output_tokens,
+            },
+            "finish_reason": resp.stop_reason,
+            "raw": resp,
+        }
 
     def _response(self, messages: list[Message], **kwargs: Any) -> Response:
         """Structured output via prompt-level JSON instruction."""
@@ -99,10 +99,9 @@ class AnthropicServer(BaseServer):
             "json_instruction",
             "Respond ONLY with a valid JSON object. No prose, no markdown fences.",
         )
-        # Inject the JSON instruction into / alongside the system message
         system_text, user_msgs = _split_system(messages)
         combined_system = "\n\n".join(filter(None, [system_text, instruction]))
-        patched = [Message.system(combined_system), *user_msgs]
+        patched = [{"role": "system", "content": combined_system}, *user_msgs]
         return self._chat(patched, **kwargs)
 
     def _stream(self, messages: list[Message], **kwargs: Any) -> Iterator[str]:
@@ -126,30 +125,31 @@ def _split_system(messages: list[Message]) -> tuple[str | None, list[Message]]:
     system: str | None = None
     rest: list[Message] = []
     for msg in messages:
-        if msg.role == "system":
-            system = msg.content if isinstance(msg.content, str) else ""
+        if msg["role"] == "system":
+            system = msg["content"] if isinstance(msg["content"], str) else ""
         else:
             rest.append(msg)
     return system, rest
 
 
 def _to_anthropic_message(msg: Message) -> dict[str, Any]:
-    if isinstance(msg.content, str):
-        return {"role": msg.role, "content": msg.content}
-    return {"role": msg.role, "content": [_part_to_anthropic(p) for p in msg.content]}
+    content = msg["content"]
+    if isinstance(content, str):
+        return {"role": msg["role"], "content": content}
+    return {"role": msg["role"], "content": [_part_to_anthropic(p) for p in content]}
 
 
 def _part_to_anthropic(part: ContentPart) -> dict[str, Any]:
-    if part.type == "text":
-        return {"type": "text", "text": part.text or ""}
-    if part.type == "image_url":
-        return {"type": "image", "source": {"type": "url", "url": part.image_url or ""}}
+    if part["type"] == "text":
+        return {"type": "text", "text": part.get("text", "")}
+    if part["type"] == "image_url":
+        return {"type": "image", "source": {"type": "url", "url": part.get("image_url", "")}}
     return {
         "type": "image",
         "source": {
             "type": "base64",
-            "media_type": part.media_type or "image/jpeg",
-            "data": part.image_data or "",
+            "media_type": part.get("media_type", "image/jpeg"),
+            "data": part.get("image_data", ""),
         },
     }
 

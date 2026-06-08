@@ -6,8 +6,8 @@ from typing import Any, Type, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from ai_navigator.infra.exceptions import ParseError
-from ai_navigator.infra.logger import get_logger
-from ai_navigator.infra.models import Response
+from ai_navigator.infra.base_navigator import Response
+from ai_navigator.monitor.logger import get_logger
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -82,10 +82,10 @@ class ResponseParser:
     # ── Convenience wrappers ─────────────────────────────────────────────────
 
     def parse_response(self, response: Response) -> Any:
-        return self.parse_json(response.content)
+        return self.parse_json(response.get("content", ""))
 
     def parse_response_pydantic(self, response: Response, model: Type[T]) -> T:
-        return self.parse_pydantic(response.content, model)
+        return self.parse_pydantic(response.get("content", ""), model)
 
     # ── Soft / non-raising variants ──────────────────────────────────────────
 

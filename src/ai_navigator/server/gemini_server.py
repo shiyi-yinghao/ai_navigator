@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.exceptions import AuthenticationError, ProviderError, RateLimitError
-from ai_navigator.infra.models import Message, Response, TokenUsage
+from ai_navigator.infra.base_navigator import Message, Response, TokenUsage
 from ai_navigator.server.base_server import BaseServer
 
 
@@ -75,12 +75,12 @@ class GeminiServer(BaseServer):
             resp = client.generate_content(gemini_msgs, **kwargs)
         except Exception as exc:
             _raise_gemini_error(exc)
-        return Response(
-            content=resp.text,
-            model=self.model,
-            usage=_parse_usage(resp),
-            raw=resp,
-        )
+        return {
+            "content": resp.text,
+            "model": self.model,
+            "usage": _parse_usage(resp),
+            "raw": resp,
+        }
 
     def _response(self, messages: list[Message], **kwargs: Any) -> Response:
         """Structured output via ``response_mime_type = application/json``."""
@@ -95,12 +95,12 @@ class GeminiServer(BaseServer):
             resp = client.generate_content(gemini_msgs, **kwargs)
         except Exception as exc:
             _raise_gemini_error(exc)
-        return Response(
-            content=resp.text,
-            model=self.model,
-            usage=_parse_usage(resp),
-            raw=resp,
-        )
+        return {
+            "content": resp.text,
+            "model": self.model,
+            "usage": _parse_usage(resp),
+            "raw": resp,
+        }
 
     def _stream(self, messages: list[Message], **kwargs: Any) -> Iterator[str]:
         gemini_msgs, system = _to_gemini_messages(messages)
@@ -133,14 +133,15 @@ def _to_gemini_messages(
     system: str | None = None
     turns: list[dict[str, Any]] = []
     for msg in messages:
-        if msg.role == "system":
-            system = msg.content if isinstance(msg.content, str) else ""
+        if msg["role"] == "system":
+            system = msg["content"] if isinstance(msg["content"], str) else ""
             continue
-        role = "user" if msg.role == "user" else "model"
-        if isinstance(msg.content, str):
-            turns.append({"role": role, "parts": [msg.content]})
+        role = "user" if msg["role"] == "user" else "model"
+        content = msg["content"]
+        if isinstance(content, str):
+            turns.append({"role": role, "parts": [content]})
         else:
-            text_parts = [p.text for p in msg.content if p.type == "text" and p.text]
+            text_parts = [p.get("text") for p in content if p.get("type") == "text" and p.get("text")]
             turns.append({"role": role, "parts": text_parts})
     return turns, system
 
@@ -149,11 +150,11 @@ def _parse_usage(resp: Any) -> TokenUsage | None:
     meta = getattr(resp, "usage_metadata", None)
     if meta is None:
         return None
-    return TokenUsage(
-        prompt_tokens=getattr(meta, "prompt_token_count", 0),
-        completion_tokens=getattr(meta, "candidates_token_count", 0),
-        total_tokens=getattr(meta, "total_token_count", 0),
-    )
+    return {
+        "prompt_tokens": getattr(meta, "prompt_token_count", 0),
+        "completion_tokens": getattr(meta, "candidates_token_count", 0),
+        "total_tokens": getattr(meta, "total_token_count", 0),
+    }
 
 
 def _raise_gemini_error(exc: Exception) -> None:
