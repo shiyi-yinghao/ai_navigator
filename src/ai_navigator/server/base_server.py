@@ -4,7 +4,7 @@ from abc import ABC
 from typing import Any, ClassVar, Iterator, Literal
 
 from ai_navigator.infra.exceptions import AINavigatorError, RateLimitError
-from ai_navigator.infra.base_navigator import Message, Response
+from ai_navigator.infra.types import Message, Response
 from ai_navigator.monitor.logger import get_logger
 
 

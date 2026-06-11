@@ -1,37 +1,45 @@
-"""Navigator — the primary user-facing entry point for ai-navigator.
+"""Navigator — unified user-facing interface.
+
+Wraps :class:`~ai_navigator.service.base_navigator.BaseNavigator` (or its
+entry-point replacement) for single requests, and provides inline access to
+online and offline batch inference.
 
 Usage::
 
-    from ai_navigator.navigator import Navigator
+    from ai_navigator import Navigator
 
     nav = Navigator()
 
-    nav.chat(
+    # Single request
+    result = nav.chat(
         request_data={"type": "message", "content": "Hello!"},
         params={"temperature": 0.7},
         configs={"model_name": "my_claude"},
     )
 
-    nav.response(
-        request_data={"type": "prompt", "template": [...], "data_dict": {...}},
-        params={},
-        configs={"model_name": "my_gpt4"},
+    # Online batch — blocks until all items finish
+    results = nav.online_batch(
+        source="requests.jsonl",
+        configs={"model_name": "my_claude"},
+        method="chat",
     )
 
-See :class:`~ai_navigator.infra.base_navigator.BaseNavigator` for credentials
-file format, ``request_data`` shapes, and infrastructure details.
+    # Offline batch — background processing
+    job_id = nav.offline_submit(
+        source="requests.jsonl",
+        configs={"model_name": "my_claude"},
+        method="chat",
+    )
+    nav.offline_status(job_id)   # {"status": "running", "completed": 42, ...}
+    nav.offline_results(job_id)  # list of result dicts
 """
 from __future__ import annotations
 from typing import Any, Union
 
-from ai_navigator.infra.base_navigator import (
-    BaseNavigator,
-    ContentPart,
-    Message,
-    TokenUsage,
-    Response,
-    make_message,
-    make_content_part,
+from ai_navigator.service.base_navigator import get_navigator_class
+from ai_navigator.infra.types import (
+    ContentPart, Message, TokenUsage, Response,
+    make_message, make_content_part,
 )
 
 __all__ = [
@@ -62,15 +70,21 @@ def assistant_message(content: Union[str, list]) -> Message:
     return make_message("assistant", content)
 
 
-# ── Navigator ─────────────────────────────────────────────────────────────────
+# ── Navigator facade ──────────────────────────────────────────────────────────
 
-class Navigator(BaseNavigator):
-    """Core passthrough component.
+class Navigator:
+    """Unified access point: single requests + batch inference.
 
-    Inherits all credentials / server-resolution / preprocessing logic from
-    :class:`~ai_navigator.infra.base_navigator.BaseNavigator`.
-    Adds the public ``chat`` and ``response`` call methods.
+    The underlying navigator class is resolved from ``ai_navigator.navigator``
+    entry points (falls back to :class:`~ai_navigator.service.base_navigator.BaseNavigator`).
+
     """
+
+    def __init__(self) -> None:
+        self._nav = get_navigator_class()()
+        self._offline_query: Any = None
+
+    # ── Single-request interface ──────────────────────────────────────────────
 
     def chat(
         self,
@@ -78,37 +92,7 @@ class Navigator(BaseNavigator):
         params: dict | None = None,
         configs: dict | None = None,
     ) -> Any:
-        """Send a chat request.
-
-        Parameters
-        ----------
-        request_data:
-            ``{"type": "message",      "content": str | list}``
-            ``{"type": "conversation", "messages": list[Message]}``
-            ``{"type": "prompt",       "template": list, "data_dict": dict}``
-        params:
-            Forwarded to the provider call (temperature, max_tokens, …).
-        configs:
-            Internal knobs — must contain ``model_name``.  Not forwarded to
-            the provider.
-        """
-        params = params or {}
-        configs = configs or {}
-
-        self._log_stage("request_receive", request_data)
-
-        model_name = configs.get("model_name", "")
-        if not model_name:
-            raise ValueError("configs must contain 'model_name'.")
-        server = self._get_server(model_name)
-
-        messages = self._preprocess(request_data)
-        self._log_stage("request_preprocess", messages)
-
-        result = server.chat(messages, **params)
-        self._log_stage("request_executed", result)
-        self._log_stage("request_returned", result)
-        return result
+        return self._nav.chat(request_data, params=params, configs=configs)
 
     def response(
         self,
@@ -116,34 +100,50 @@ class Navigator(BaseNavigator):
         params: dict | None = None,
         configs: dict | None = None,
     ) -> Any:
-        """Send a structured-output request.
+        return self._nav.response(request_data, params=params, configs=configs)
 
-        Parameters
-        ----------
-        request_data:
-            ``{"type": "message",      "content": str | list}``
-            ``{"type": "conversation", "messages": list[Message]}``
-            ``{"type": "prompt",       "template": list, "data_dict": dict}``
-        params:
-            Forwarded to the provider call (response_format, schema, …).
-        configs:
-            Internal knobs — must contain ``model_name``.  Not forwarded to
-            the provider.
-        """
-        params = params or {}
-        configs = configs or {}
+    def __getattr__(self, name: str) -> Any:
+        """Delegate any plugin-added methods to the underlying navigator."""
+        return getattr(self._nav, name)
 
-        self._log_stage("request_receive", request_data)
+    # ── Online batch ──────────────────────────────────────────────────────────
 
-        model_name = configs.get("model_name", "")
-        if not model_name:
-            raise ValueError("configs must contain 'model_name'.")
-        server = self._get_server(model_name)
+    def online_batch(
+        self,
+        source: str | list[dict],
+        params: dict | None = None,
+        configs: dict | None = None,
+        method: str = "chat",
+        max_workers: int = 8,
+    ) -> list[Any]:
+        """Run concurrent batch inference; blocks until all items complete."""
+        from ai_navigator.batch_inference.online import OnlineBatch
+        return OnlineBatch(method=method, max_workers=max_workers).run(source, params, configs)
 
-        messages = self._preprocess(request_data)
-        self._log_stage("request_preprocess", messages)
+    # ── Offline batch ─────────────────────────────────────────────────────────
 
-        result = server.response(messages, **params)
-        self._log_stage("request_executed", result)
-        self._log_stage("request_returned", result)
-        return result
+    def offline_submit(
+        self,
+        source: str | list[dict],
+        params: dict | None = None,
+        configs: dict | None = None,
+        method: str = "chat",
+        job_id: str | None = None,
+    ) -> str:
+        """Submit a background batch job; returns ``job_id`` immediately."""
+        from ai_navigator.batch_inference.offline import OfflineBatch
+        return OfflineBatch(method=method).submit(source, params=params, configs=configs, job_id=job_id)
+
+    def offline_status(self, job_id: str) -> dict | None:
+        """Return progress of a background job."""
+        return self._get_offline_query().job_status(job_id)
+
+    def offline_results(self, job_id: str) -> list[dict] | None:
+        """Return results for a background job (partial if still running)."""
+        return self._get_offline_query().get_results(job_id)
+
+    def _get_offline_query(self) -> Any:
+        if self._offline_query is None:
+            from ai_navigator.batch_inference.offline import OfflineBatch
+            self._offline_query = OfflineBatch()
+        return self._offline_query

@@ -6,7 +6,7 @@ from typing import Any, Type, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from ai_navigator.infra.exceptions import ParseError
-from ai_navigator.infra.base_navigator import Response
+from ai_navigator.infra.types import Response
 from ai_navigator.monitor.logger import get_logger
 
 T = TypeVar("T", bound=BaseModel)

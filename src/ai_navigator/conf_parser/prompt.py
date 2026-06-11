@@ -44,7 +44,7 @@ from typing import Any
 import yaml
 
 from ai_navigator.infra.exceptions import AINavigatorError
-from ai_navigator.infra.base_navigator import ContentPart, Message
+from ai_navigator.infra.types import ContentPart, Message
 
 
 class PromptError(AINavigatorError):

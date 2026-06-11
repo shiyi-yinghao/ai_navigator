@@ -1,6 +1,6 @@
 # Parser & Schema 模块设计说明
 
-## 当前架构（v0.1）
+## 当前架构
 
 ```
 用户 YAML schema

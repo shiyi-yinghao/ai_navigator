@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.exceptions import AuthenticationError, ProviderError, RateLimitError
-from ai_navigator.infra.base_navigator import Message, Response, TokenUsage
+from ai_navigator.infra.types import Message, Response, TokenUsage
 from ai_navigator.server.base_server import BaseServer
 
 

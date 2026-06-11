@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from ai_navigator.schema.builder import SchemaBuilder
+from ai_navigator.schema.composer import SchemaComposer as SchemaBuilder  # SchemaBuilder is not yet implemented
 
 
 class ConfParser:
