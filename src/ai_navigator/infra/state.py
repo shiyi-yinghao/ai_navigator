@@ -25,16 +25,16 @@ class RequestState:
     request_data:
         Raw input descriptor.  One of three shapes:
 
-        ``{"type": "message", "content": str | list}``
-            User-assembled content.  ``content`` is a bare string or a list
+        ``{"message": str | list}``
+            User-assembled content.  Value is a bare string or a list
             of content-part dicts (keys: ``type``, ``text`` / ``image_url`` …).
 
-        ``{"type": "conversation", "messages": list[Message]}``
+        ``{"conversation": list[Message]}``
             Fully pre-assembled conversation passed through unchanged.
 
-        ``{"type": "prompt", "template": list, "data_dict": dict}``
-            YAML-driven prompt.  ``template`` is the parsed YAML list;
-            ``data_dict`` supplies dynamic substitutions.
+        ``{"prompt": list, "data_dict": dict}``
+            YAML-driven prompt.  ``"prompt"`` value is the parsed template
+            list; ``data_dict`` supplies dynamic substitutions.
 
     params:
         LLM / server parameters passed directly through to the provider call.

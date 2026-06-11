@@ -8,7 +8,7 @@ from ai_navigator import Navigator
 nav = Navigator()
 
 result = nav.chat(
-    request_data={"type": "message", "content": "Summarise this in one sentence."},
+    request_data={"message": "Summarise this in one sentence."},
     params={"temperature": 0.3},
     configs={"model_name": "my_claude"},
 )
@@ -76,7 +76,7 @@ nav = Navigator()
 
 # Chat
 result = nav.chat(
-    request_data={"type": "message", "content": "What is the capital of France?"},
+    request_data={"message": "What is the capital of France?"},
     params={"temperature": 0.0},
     configs={"model_name": "my_gpt4"},
 )
@@ -85,7 +85,7 @@ print(result["usage"])     # {"prompt_tokens": ..., "completion_tokens": ..., ..
 
 # Structured output
 result = nav.response(
-    request_data={"type": "message", "content": "Review: 'Great laptop, fast and light.'"},
+    request_data={"message": "Review: 'Great laptop, fast and light.'"},
     params={"response_format": fmt},   # see Schema section
     configs={"model_name": "my_claude"},
 )
@@ -93,11 +93,11 @@ result = nav.response(
 
 ### Request data shapes
 
-| `type` | Fields |
-|---|---|
-| `"message"` | `content: str \| list` |
-| `"conversation"` | `messages: list[Message]` |
-| `"prompt"` | `template: list`, `data_dict: dict` |
+| Key | Value type | Description |
+|---|---|---|
+| `"message"` | `str \| list` | Single user message |
+| `"conversation"` | `list[Message]` | Full multi-turn conversation |
+| `"prompt"` | `list` | YAML template list; pair with `"data_dict"` |
 
 ```python
 from ai_navigator import user_message, system_message
@@ -105,8 +105,7 @@ from ai_navigator import user_message, system_message
 # Conversation
 result = nav.chat(
     request_data={
-        "type": "conversation",
-        "messages": [
+        "conversation": [
             system_message("You are a concise assistant."),
             user_message("Name three sorting algorithms."),
         ],
@@ -117,8 +116,7 @@ result = nav.chat(
 # YAML-driven prompt
 result = nav.chat(
     request_data={
-        "type": "prompt",
-        "template": [...],          # loaded from YAML
+        "prompt": [...],            # loaded from YAML
         "data_dict": {"product": "laptop"},
     },
     configs={"model_name": "my_gpt4"},
@@ -164,8 +162,8 @@ results = nav.offline_results(job_id)
 
 JSONL format — one `request_data` dict per line:
 ```json
-{"type": "message", "content": "Translate: Hello"}
-{"type": "message", "content": "Translate: Goodbye"}
+{"message": "Translate: Hello"}
+{"message": "Translate: Goodbye"}
 ```
 
 ---
@@ -210,7 +208,7 @@ sc  = SchemaComposer.from_yaml_file("review_schema.yaml")
 fmt = sc.schema_conversion()      # → response_format dict
 
 result = nav.response(
-    request_data={"type": "message", "content": "Review: 'Great laptop, fast and light.'"},
+    request_data={"message": "Review: 'Great laptop, fast and light.'"},
     params={"response_format": fmt},
     configs={"model_name": "my_gpt4"},
 )
@@ -267,7 +265,7 @@ pb   = PromptBuilder.from_yaml_file("prompt.yaml")
 msgs = pb.build(data_dict={"product_description": "Lightweight ergonomic mouse"})
 
 result = nav.chat(
-    request_data={"type": "conversation", "messages": msgs},
+    request_data={"conversation": msgs},
     configs={"model_name": "my_claude"},
 )
 ```
@@ -288,8 +286,7 @@ image_part = proc.resize("large_photo.jpg", max_px=768)   # requires [image]
 
 result = nav.chat(
     request_data={
-        "type": "conversation",
-        "messages": [
+        "conversation": [
             user_message([image_part, {"type": "text", "text": "What does this chart show?"}]),
         ],
     },
@@ -446,7 +443,7 @@ from ai_navigator import Navigator
 nav = Navigator()
 
 result = nav.chat(
-    request_data={"type": "message", "content": "用一句话总结以下内容。"},
+    request_data={"message": "用一句话总结以下内容。"},
     params={"temperature": 0.3},
     configs={"model_name": "my_claude"},
 )
@@ -514,7 +511,7 @@ nav = Navigator()
 
 # 对话
 result = nav.chat(
-    request_data={"type": "message", "content": "法国的首都是哪里？"},
+    request_data={"message": "法国的首都是哪里？"},
     params={"temperature": 0.0},
     configs={"model_name": "my_gpt4"},
 )
@@ -523,7 +520,7 @@ print(result["usage"])     # {"prompt_tokens": ..., "completion_tokens": ..., ..
 
 # 结构化输出
 result = nav.response(
-    request_data={"type": "message", "content": "评论：'性能很好，轻薄便携。'"},
+    request_data={"message": "评论：'性能很好，轻薄便携。'"},
     params={"response_format": fmt},   # 详见 Schema 章节
     configs={"model_name": "my_claude"},
 )
@@ -531,11 +528,11 @@ result = nav.response(
 
 ### request_data 格式
 
-| `type` | 字段 |
-|---|---|
-| `"message"` | `content: str \| list` |
-| `"conversation"` | `messages: list[Message]` |
-| `"prompt"` | `template: list`、`data_dict: dict` |
+| Key | Value 类型 | 说明 |
+|---|---|---|
+| `"message"` | `str \| list` | 单条用户消息 |
+| `"conversation"` | `list[Message]` | 完整多轮对话 |
+| `"prompt"` | `list` | YAML 模板列表，配合 `"data_dict"` 使用 |
 
 ```python
 from ai_navigator import user_message, system_message
@@ -543,8 +540,7 @@ from ai_navigator import user_message, system_message
 # 多轮对话
 result = nav.chat(
     request_data={
-        "type": "conversation",
-        "messages": [
+        "conversation": [
             system_message("你是一个简洁的助手。"),
             user_message("列举三种排序算法。"),
         ],
@@ -555,8 +551,7 @@ result = nav.chat(
 # YAML 驱动的 prompt
 result = nav.chat(
     request_data={
-        "type": "prompt",
-        "template": [...],          # 从 YAML 加载
+        "prompt": [...],            # 从 YAML 加载
         "data_dict": {"product": "笔记本电脑"},
     },
     configs={"model_name": "my_gpt4"},
@@ -602,8 +597,8 @@ results = nav.offline_results(job_id)
 
 JSONL 格式 — 每行一个 `request_data` 字典：
 ```json
-{"type": "message", "content": "翻译：Hello"}
-{"type": "message", "content": "翻译：Goodbye"}
+{"message": "翻译：Hello"}
+{"message": "翻译：Goodbye"}
 ```
 
 ---
@@ -648,7 +643,7 @@ sc  = SchemaComposer.from_yaml_file("review_schema.yaml")
 fmt = sc.schema_conversion()      # → response_format dict
 
 result = nav.response(
-    request_data={"type": "message", "content": "评论：'性能很好，轻薄便携。'"},
+    request_data={"message": "评论：'性能很好，轻薄便携。'"},
     params={"response_format": fmt},
     configs={"model_name": "my_gpt4"},
 )
@@ -705,7 +700,7 @@ pb   = PromptBuilder.from_yaml_file("prompt.yaml")
 msgs = pb.build(data_dict={"product_description": "轻量人体工学鼠标"})
 
 result = nav.chat(
-    request_data={"type": "conversation", "messages": msgs},
+    request_data={"conversation": msgs},
     configs={"model_name": "my_claude"},
 )
 ```
@@ -726,8 +721,7 @@ image_part = proc.resize("large_photo.jpg", max_px=768)   # 需要 [image] 额�
 
 result = nav.chat(
     request_data={
-        "type": "conversation",
-        "messages": [
+        "conversation": [
             user_message([image_part, {"type": "text", "text": "这张图表展示了什么？"}]),
         ],
     },

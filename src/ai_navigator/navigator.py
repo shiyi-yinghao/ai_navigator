@@ -12,7 +12,7 @@ Usage::
 
     # Single request
     result = nav.chat(
-        request_data={"type": "message", "content": "Hello!"},
+        request_data={"message": "Hello!"},
         params={"temperature": 0.7},
         configs={"model_name": "my_claude"},
     )

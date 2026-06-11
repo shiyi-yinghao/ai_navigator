@@ -68,9 +68,9 @@ class BaseNavigator:
         Parameters
         ----------
         request_data:
-            ``{"type": "message",      "content": str | list}``
-            ``{"type": "conversation", "messages": list[Message]}``
-            ``{"type": "prompt",       "template": list, "data_dict": dict}``
+            ``{"message": str | list}``
+            ``{"conversation": list[Message]}``
+            ``{"prompt": list, "data_dict": dict}``
         params:
             Provider call parameters (temperature, max_tokens, …).
         configs:
@@ -156,25 +156,22 @@ class BaseNavigator:
     # ── Request preprocessing ─────────────────────────────────────────────────
 
     def _preprocess(self, request_data: dict) -> list[Message]:
-        rtype = request_data.get("type", "")
-
-        if rtype == "message":
-            content = request_data["content"]
+        if "message" in request_data:
+            content = request_data["message"]
             if isinstance(content, str):
                 return [make_message("user", content)]
             return [{"role": "user", "content": content}]
 
-        if rtype == "conversation":
-            return list(request_data["messages"])
+        if "conversation" in request_data:
+            return list(request_data["conversation"])
 
-        if rtype == "prompt":
+        if "prompt" in request_data:
             from ai_navigator.conf_parser.prompt import PromptBuilder
-            builder = PromptBuilder(request_data["template"])
+            builder = PromptBuilder(request_data["prompt"])
             return builder.build(data_dict=request_data.get("data_dict", {}))
 
         raise AINavigatorError(
-            f"Unknown request_data type '{rtype}'. "
-            "Expected 'message', 'conversation', or 'prompt'."
+            "request_data must contain a 'message', 'conversation', or 'prompt' key."
         )
 
     # ── Stage logging ─────────────────────────────────────────────────────────

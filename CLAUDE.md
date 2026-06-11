@@ -155,11 +155,11 @@ def get_navigator_class() -> type:
 
 `_preprocess(request_data)` handles the three `request_data` shapes:
 
-| `type` | Action |
+| Key present | Action |
 |---|---|
-| `"message"` | wrap str/list in `[user_message(content)]` |
-| `"conversation"` | pass `messages` list through |
-| `"prompt"` | call `PromptBuilder(template).build(data_dict)` |
+| `"message"` | wrap value (str/list) in `[user_message(value)]` |
+| `"conversation"` | pass value (list) through unchanged |
+| `"prompt"` | call `PromptBuilder(value).build(data_dict=request_data.get("data_dict", {}))` |
 
 ### `navigator.py` — Navigator
 
@@ -245,7 +245,10 @@ All `Response` instances are plain dicts — access with `result["content"]`, no
 Pipeline state container for intermediate stages.
 
 ```
-request_data  — raw input from caller
+request_data  — raw input from caller:
+                  {"message": str | list}
+                  {"conversation": list[Message]}
+                  {"prompt": list, "data_dict": dict}
 params        — provider call parameters (temperature, max_tokens, …)
 configs       — package control knobs (NOT forwarded to provider)
 reference     — {"schema": SchemaComposer, ...} after preprocess
@@ -355,7 +358,7 @@ JSON extraction, `find_value`, enum validation from raw LLM response.
 User
   │
   ▼
-Navigator.chat(request_data, params, configs)
+Navigator.chat({"message": ...} | {"conversation": ...} | {"prompt": ..., "data_dict": ...}, params, configs)
   │
   ▼
 BaseNavigator.chat()
