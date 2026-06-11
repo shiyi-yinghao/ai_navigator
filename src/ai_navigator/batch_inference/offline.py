@@ -78,17 +78,17 @@ class OfflineBatch:
 
     def submit(
         self,
-        source: str | list[dict],
+        source: str | Path,
         params: dict | None = None,
         configs: dict | None = None,
         job_id: str | None = None,
     ) -> str:
-        """Register and start a batch job in the background.
+        """Stream a JSONL file into storage and start background processing.
 
         Parameters
         ----------
         source:
-            Path to a JSONL file or a plain ``list[dict]``.
+            Path to a JSONL file (one ``request_data`` dict per line).
         params:
             Shared params forwarded to every provider call.
         configs:
@@ -102,17 +102,17 @@ class OfflineBatch:
             The ``job_id`` — use it with :meth:`job_status` and
             :meth:`get_results`.
         """
-        items = _load_items(source)
         params = params or {}
         configs = configs or {}
         job_id = job_id or str(uuid.uuid4())
 
         self._storage.create_job(
             job_id,
-            total=len(items),
+            total=0,
             meta={"params": params, "configs": configs, "method": self._method},
         )
-        self._storage.add_items(job_id, items)
+        total = self._storage.add_items(job_id, _iter_jsonl(Path(source)))
+        self._storage.update_job_total(job_id, total)
 
         thread = threading.Thread(
             target=self._process_job,
@@ -121,7 +121,7 @@ class OfflineBatch:
             name=f"offline-batch-{job_id[:8]}",
         )
         thread.start()
-        _log.info("job %s submitted — %d items, method=%s", job_id, len(items), self._method)
+        _log.info("job %s submitted — %d items, method=%s", job_id, total, self._method)
         return job_id
 
     # ── Progress & results ────────────────────────────────────────────────────
@@ -173,13 +173,10 @@ class OfflineBatch:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _load_items(source: str | list[dict]) -> list[dict]:
-    if isinstance(source, list):
-        return source
-    items = []
-    with open(Path(source), encoding="utf-8") as fh:
+def _iter_jsonl(path: Path):
+    """Yield dicts from a JSONL file one line at a time (no full-file load)."""
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if line:
-                items.append(json.loads(line))
-    return items
+                yield json.loads(line)

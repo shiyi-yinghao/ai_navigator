@@ -28,7 +28,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from importlib.metadata import entry_points
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterable, Protocol, runtime_checkable
 
 from ai_navigator.infra.const_configs import ConstConfigs
 from ai_navigator.monitor.logger import get_logger
@@ -43,7 +43,8 @@ class BatchStorageProtocol(Protocol):
     """Interface that a custom batch storage backend must implement."""
 
     def create_job(self, job_id: str, total: int, meta: dict) -> bool: ...
-    def add_items(self, job_id: str, items: list[dict]) -> bool: ...
+    def add_items(self, job_id: str, items: Iterable[dict]) -> int: ...
+    def update_job_total(self, job_id: str, total: int) -> None: ...
     def update_job_status(self, job_id: str, status: str) -> None: ...
     def record_item_result(self, job_id: str, item_idx: int, result: Any) -> None: ...
     def record_item_error(self, job_id: str, item_idx: int, error: str) -> None: ...
@@ -161,21 +162,43 @@ class BatchStorage:
         finally:
             con.close()
 
-    def add_items(self, job_id: str, items: list[dict]) -> bool:
+    def add_items(self, job_id: str, items: Iterable[dict]) -> int:
+        """Stream items into storage. Returns count of items written."""
         con = self._connect()
         if con is None:
-            return False
+            return 0
+        count = 0
         try:
+            def _gen():
+                nonlocal count
+                for item in items:
+                    yield (job_id, count, json.dumps(item, ensure_ascii=False))
+                    count += 1
             con.executemany(
                 "INSERT INTO batch_items (job_id, item_idx, status, request_data) "
                 "VALUES (?, ?, 'pending', ?)",
-                [(job_id, idx, json.dumps(item, ensure_ascii=False)) for idx, item in enumerate(items)],
+                _gen(),
             )
             con.commit()
-            return True
+            return count
         except Exception as exc:
             _log.warning("add_items failed: %s", exc)
-            return False
+            return count
+        finally:
+            con.close()
+
+    def update_job_total(self, job_id: str, total: int) -> None:
+        con = self._connect()
+        if con is None:
+            return
+        try:
+            con.execute(
+                "UPDATE batch_jobs SET total=?, updated_at=? WHERE job_id=?",
+                (total, _now(), job_id),
+            )
+            con.commit()
+        except Exception as exc:
+            _log.warning("update_job_total failed: %s", exc)
         finally:
             con.close()
 

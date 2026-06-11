@@ -33,6 +33,7 @@ class ConstConfigs:
     STORAGE_PATH: str = os.environ.get("AI_NAVIGATOR_STORAGE_PATH", "ai_navigator.db")
     CREDENTIALS_PATH: str = os.environ.get("AI_NAVIGATOR_CREDENTIALS_PATH", "credentials.yaml")
     LOGGING_STREAM: bool = os.environ.get("AI_NAVIGATOR_LOGGING_STREAM", "true").lower() != "false"
+    BATCH_SIZE: int = int(os.environ.get("AI_NAVIGATOR_BATCH_SIZE", "50"))
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:

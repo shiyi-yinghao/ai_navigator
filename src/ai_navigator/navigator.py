@@ -110,13 +110,13 @@ class Navigator:
 
     def online_batch(
         self,
-        source: str | list[dict],
+        source: str,
         params: dict | None = None,
         configs: dict | None = None,
         method: str = "chat",
         max_workers: int = 8,
     ) -> list[Any]:
-        """Run concurrent batch inference; blocks until all items complete."""
+        """Run concurrent batch inference from a JSONL file; blocks until all items complete."""
         from ai_navigator.batch_inference.online import OnlineBatch
         return OnlineBatch(method=method, max_workers=max_workers).run(source, params, configs)
 
@@ -124,13 +124,13 @@ class Navigator:
 
     def offline_submit(
         self,
-        source: str | list[dict],
+        source: str,
         params: dict | None = None,
         configs: dict | None = None,
         method: str = "chat",
         job_id: str | None = None,
     ) -> str:
-        """Submit a background batch job; returns ``job_id`` immediately."""
+        """Stream a JSONL file into storage and start background processing; returns ``job_id`` immediately."""
         from ai_navigator.batch_inference.offline import OfflineBatch
         return OfflineBatch(method=method).submit(source, params=params, configs=configs, job_id=job_id)
 
