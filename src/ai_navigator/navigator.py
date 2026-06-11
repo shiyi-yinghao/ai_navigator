@@ -39,6 +39,7 @@ from typing import Any, Union
 from ai_navigator.service.base_navigator import get_navigator_class
 from ai_navigator.infra.types import (
     ContentPart, Message, TokenUsage, Response,
+    NavigatorResult, CallStatus,
     make_message, make_content_part,
 )
 
@@ -48,6 +49,8 @@ __all__ = [
     "Message",
     "TokenUsage",
     "Response",
+    "NavigatorResult",
+    "CallStatus",
     "make_content_part",
     "make_message",
     "user_message",
@@ -91,7 +94,7 @@ class Navigator:
         request_data: dict,
         params: dict | None = None,
         configs: dict | None = None,
-    ) -> Any:
+    ) -> NavigatorResult:
         return self._nav.chat(request_data, params=params, configs=configs)
 
     def response(
@@ -99,7 +102,7 @@ class Navigator:
         request_data: dict,
         params: dict | None = None,
         configs: dict | None = None,
-    ) -> Any:
+    ) -> NavigatorResult:
         return self._nav.response(request_data, params=params, configs=configs)
 
     def __getattr__(self, name: str) -> Any:

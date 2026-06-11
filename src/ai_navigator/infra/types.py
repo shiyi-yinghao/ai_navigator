@@ -34,6 +34,18 @@ class Response(TypedDict, total=False):
     raw: Any
 
 
+class CallStatus(TypedDict):
+    ok: bool
+    error: str | None
+    error_type: str | None
+
+
+class NavigatorResult(TypedDict):
+    result: Any        # server Response TypedDict, or None on error
+    usage: TokenUsage  # token usage, or {} on error
+    status: CallStatus
+
+
 def make_content_part(type_: str, **kwargs: Any) -> ContentPart:
     return {"type": type_, **kwargs}  # type: ignore[return-value]
 

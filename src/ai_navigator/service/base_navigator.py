@@ -20,11 +20,12 @@ import logging
 from importlib.metadata import entry_points
 from typing import Any
 
-from ai_navigator.infra.types import Message, make_message
+from ai_navigator.infra.types import Message, NavigatorResult, make_message
 from ai_navigator.infra.exceptions import AINavigatorError
 from ai_navigator.param.const_configs import ConstConfigs
 from ai_navigator.param.credentials import get_credentials_class
 from ai_navigator.monitor.logger import get_logger
+from ai_navigator.monitor.traffic import traffic_monitor
 from ai_navigator.server.registry import build_registry
 
 _log_module = logging.getLogger("ai_navigator.service.navigator")
@@ -40,6 +41,7 @@ class BaseNavigator:
             model: claude-sonnet-4-6
             api_key: sk-ant-...
             max_tokens: 4096
+            retry_max: 3        # optional, caps retries for this account
 
         my_gpt4:
           - provider_type: openai
@@ -57,12 +59,13 @@ class BaseNavigator:
 
     # ── Public call methods ───────────────────────────────────────────────────
 
+    @traffic_monitor
     def chat(
         self,
         request_data: dict,
         params: dict | None = None,
         configs: dict | None = None,
-    ) -> Any:
+    ) -> NavigatorResult:
         """Send a chat request.
 
         Parameters
@@ -75,16 +78,45 @@ class BaseNavigator:
             Provider call parameters (temperature, max_tokens, …).
         configs:
             Must contain ``model_name``.  Optional: ``user`` (default
-            ``"default"``).
-        """
-        return self._dispatch("chat", request_data, params, configs)
+            ``"default"``), ``retry_max`` (capped by credentials ``retry_max``).
 
+        Returns
+        -------
+        NavigatorResult
+            ``result``  — server :class:`~ai_navigator.infra.types.Response`
+            ``usage``   — token usage
+            ``status``  — ``{"ok": True, ...}`` on success
+        """
+        params = params or {}
+        configs = configs or {}
+        self._log_stage("request_receive", request_data)
+
+        model_name = configs.get("model_name", "")
+        if not model_name:
+            raise ValueError("configs must contain 'model_name'.")
+
+        server  = self._get_server(model_name)
+        messages = self._preprocess(request_data)
+        self._log_stage("request_preprocess", messages)
+
+        effective_retry = self._effective_retry(model_name, configs)
+        server_result = server.chat(messages, _retry_max=effective_retry, **params)
+        self._log_stage("request_executed", server_result)
+
+        usage = server_result.get("usage", {}) if isinstance(server_result, dict) else {}
+        return NavigatorResult(
+            result=server_result,
+            usage=usage,
+            status={"ok": True, "error": None, "error_type": None},
+        )
+
+    @traffic_monitor
     def response(
         self,
         request_data: dict,
         params: dict | None = None,
         configs: dict | None = None,
-    ) -> Any:
+    ) -> NavigatorResult:
         """Send a structured-output request.
 
         Parameters
@@ -94,12 +126,15 @@ class BaseNavigator:
         params:
             Provider call parameters (response_format, schema, …).
         configs:
-            Must contain ``model_name``.  Optional: ``user`` (default
-            ``"default"``).
-        """
-        return self._dispatch("response", request_data, params, configs)
+            Must contain ``model_name``.  Optional: ``user``, ``retry_max``.
 
-    def _dispatch(self, method: str, request_data: dict, params: Any, configs: Any) -> Any:
+        Returns
+        -------
+        NavigatorResult
+            ``result``  — server :class:`~ai_navigator.infra.types.Response`
+            ``usage``   — token usage
+            ``status``  — ``{"ok": True, ...}`` on success
+        """
         params = params or {}
         configs = configs or {}
         self._log_stage("request_receive", request_data)
@@ -107,29 +142,21 @@ class BaseNavigator:
         model_name = configs.get("model_name", "")
         if not model_name:
             raise ValueError("configs must contain 'model_name'.")
-        user = configs.get("user", "default")
 
-        server       = self._get_server(model_name)
-        account_name = self._get_account_name(model_name)
-        messages     = self._preprocess(request_data)
+        server   = self._get_server(model_name)
+        messages = self._preprocess(request_data)
         self._log_stage("request_preprocess", messages)
 
-        # Traffic monitoring — enter (hook may raise to block)
-        from ai_navigator.monitor.traffic import get_traffic_monitor
-        monitor = get_traffic_monitor()
-        estimated, mk, dk = monitor.on_request_enter(account_name, user, configs)
+        effective_retry = self._effective_retry(model_name, configs)
+        server_result = server.response(messages, _retry_max=effective_retry, **params)
+        self._log_stage("request_executed", server_result)
 
-        # Provider call with retry on RateLimitError
-        from ai_navigator.service.retry import get_retry_policy
-        result = get_retry_policy().execute(getattr(server, method), messages, **params)
-        self._log_stage("request_executed", result)
-
-        # Traffic monitoring — complete
-        usage = result.get("usage", {}) if isinstance(result, dict) else {}
-        monitor.on_request_complete(account_name, user, estimated, usage, mk, dk)
-
-        self._log_stage("request_returned", result)
-        return result
+        usage = server_result.get("usage", {}) if isinstance(server_result, dict) else {}
+        return NavigatorResult(
+            result=server_result,
+            usage=usage,
+            status={"ok": True, "error": None, "error_type": None},
+        )
 
     # ── Server resolution ─────────────────────────────────────────────────────
 
@@ -167,6 +194,14 @@ class BaseNavigator:
         creds_list = self._all_creds.get(model_name, [{}])
         cred = creds_list[0] if creds_list else {}
         return cred.get("account_name", model_name)
+
+    def _effective_retry(self, model_name: str, configs: dict) -> int:
+        """Return min(credentials retry_max, configs retry_max)."""
+        creds_list = self._all_creds.get(model_name, [{}])
+        cred = creds_list[0] if creds_list else {}
+        cred_max    = int(cred.get("retry_max",     ConstConfigs.RETRY_MAX))
+        request_max = int(configs.get("retry_max",  ConstConfigs.RETRY_MAX))
+        return min(cred_max, request_max)
 
     # ── Request preprocessing ─────────────────────────────────────────────────
 

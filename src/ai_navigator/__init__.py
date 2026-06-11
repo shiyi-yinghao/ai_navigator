@@ -10,7 +10,7 @@ from ai_navigator.infra.exceptions import (
     RateLimitError,
     SchemaError,
 )
-from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage
+from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage, NavigatorResult, CallStatus
 from ai_navigator.service.base_navigator import BaseNavigator, get_navigator_class
 from ai_navigator.infra.state import RequestState, Status, StatusCode
 from ai_navigator.param.const_configs import ConstConfigs
@@ -26,7 +26,7 @@ from ai_navigator.batch_inference.online import OnlineBatch
 from ai_navigator.batch_inference.offline import OfflineBatch
 from ai_navigator.batch_inference.storage import BatchStorageProtocol, get_batch_storage_class
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Core
@@ -38,6 +38,8 @@ __all__ = [
     "Response",
     "TokenUsage",
     "ContentPart",
+    "NavigatorResult",
+    "CallStatus",
     # Pipeline state
     "RequestState",
     "Status",

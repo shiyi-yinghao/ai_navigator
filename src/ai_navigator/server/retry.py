@@ -1,21 +1,28 @@
-"""Retry policy for transient LLM provider errors.
+"""Retry policy for transient LLM provider rate-limit errors.
 
-Currently handles :class:`~ai_navigator.infra.exceptions.RateLimitError`
-with configurable exponential back-off.  Other error types are re-raised
-immediately without retry.
+Lives in the ``server`` layer so that
+:class:`~ai_navigator.server.base_server.BaseServer` can delegate its retry
+logic here.
 
-Configuration (via :class:`~ai_navigator.param.const_configs.ConstConfigs`
-or environment variables):
+Effective retry count
+---------------------
+:meth:`~ai_navigator.server.base_server.BaseServer._invoke` receives
+``_retry_max`` as a popped kwarg.  The caller
+(:class:`~ai_navigator.service.base_navigator.BaseNavigator`) computes::
 
-  AI_NAVIGATOR_RETRY_MAX      — maximum number of retry attempts (default: 3)
-  AI_NAVIGATOR_RETRY_WAIT     — initial wait in seconds before first retry (default: 1.0)
-  AI_NAVIGATOR_RETRY_BACKOFF  — multiplier applied to wait after each attempt (default: 2.0)
+    effective = min(
+        credentials.get("retry_max", ConstConfigs.RETRY_MAX),
+        configs.get("retry_max", ConstConfigs.RETRY_MAX),
+    )
+
+The smaller value wins — accounts cap the maximum, callers can lower it further.
 
 Usage::
 
-    from ai_navigator.service.retry import get_retry_policy
+    from ai_navigator.server.retry import RetryPolicy
 
-    result = get_retry_policy().execute(server.chat, messages, **params)
+    policy = RetryPolicy(max_retries=3, initial_wait=1.0, backoff=2.0)
+    result = policy.execute(fn, *args, **kwargs)
 """
 from __future__ import annotations
 
@@ -25,7 +32,7 @@ from typing import Any, Callable
 
 from ai_navigator.infra.exceptions import RateLimitError
 
-_log = logging.getLogger("ai_navigator.service.retry")
+_log = logging.getLogger("ai_navigator.server.retry")
 
 
 class RetryPolicy:
@@ -74,21 +81,3 @@ class RetryPolicy:
                 wait *= self.backoff
 
         raise last_exc  # type: ignore[misc]
-
-
-# ── Module-level cached instance ──────────────────────────────────────────────
-
-_policy: RetryPolicy | None = None
-
-
-def get_retry_policy() -> RetryPolicy:
-    """Return a :class:`RetryPolicy` configured from :class:`~ai_navigator.param.const_configs.ConstConfigs`."""
-    global _policy
-    if _policy is None:
-        from ai_navigator.param.const_configs import ConstConfigs
-        _policy = RetryPolicy(
-            max_retries=ConstConfigs.RETRY_MAX,
-            initial_wait=ConstConfigs.RETRY_WAIT,
-            backoff=ConstConfigs.RETRY_BACKOFF,
-        )
-    return _policy

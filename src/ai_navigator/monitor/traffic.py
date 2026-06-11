@@ -17,34 +17,51 @@ Metrics are tracked at two granularities (12 variables total):
   - **account level** — keyed by ``account_name`` from credentials
   - **account | user level** — keyed by ``(account_name, user)`` from configs
 
-Entry Points hook
------------------
-Register a callable under ``ai_navigator.traffic`` to intercept requests at
-entry time.  The hook receives ``configs`` and the pre-increment
-:class:`TrafficStats` snapshot.  Raise any exception to block the request::
+``@traffic_monitor`` decorator
+------------------------------
+Apply to :class:`~ai_navigator.service.base_navigator.BaseNavigator` methods.
+The decorator:
+
+  1. Reads pre-request stats and invokes the :class:`RequestRateLimiter` hook.
+  2. If the limiter returns ``False`` (or raises), returns an error
+     :class:`~ai_navigator.infra.types.NavigatorResult` without calling the
+     underlying method.
+  3. Records the request enter (increments counters with an estimated token
+     cost).
+  4. Calls the wrapped method; catches any exception and converts it to an error
+     ``NavigatorResult``.
+  5. Records the request complete (corrects the token estimate with actual
+     usage).
+
+Rate limiter Entry Point
+------------------------
+Register a callable under ``ai_navigator.traffic`` to replace the default
+allow-all limiter::
 
     # pyproject.toml
     [project.entry-points."ai_navigator.traffic"]
-    my_hook = "my_package.hooks:check_rate_limit"
+    my_limiter = "my_package.hooks:rate_limiter"
 
-Hook signature::
+Signature::
 
-    def check_rate_limit(configs: dict, stats: TrafficStats) -> None:
-        qpm = configs.get("_qpm")          # passed through from credentials
-        if stats["account_min_queries"] >= qpm:
-            from ai_navigator.infra.exceptions import RateLimitError
-            raise RateLimitError("QPM exceeded for account")
+    def rate_limiter(configs: dict, stats: TrafficStats) -> bool:
+        qpm = configs.get("_qpm", 60)
+        return stats["account_min_queries"] < qpm
 
-If no hook is registered, all requests are allowed through.
+Return ``True`` to allow the request, ``False`` to block it.  Only the first
+registered entry point is used.
 """
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from functools import wraps
 from importlib.metadata import entry_points
 from threading import Lock
-from typing import Callable, TypedDict
+from typing import Any, Callable, Protocol, TypedDict
+
+from ai_navigator.infra.types import NavigatorResult, TokenUsage
 
 _log = logging.getLogger("ai_navigator.monitor.traffic")
 
@@ -73,17 +90,26 @@ class TrafficStats(TypedDict):
     user_day_output_tokens: int
 
 
+# ── Rate limiter protocol ─────────────────────────────────────────────────────
+
+class RequestRateLimiter(Protocol):
+    """Callable that decides whether a request should be allowed.
+
+    Return ``True`` to allow, ``False`` to block.
+    """
+    def __call__(self, configs: dict, stats: TrafficStats) -> bool: ...
+
+
+def _default_limiter(configs: dict, stats: TrafficStats) -> bool:
+    return True
+
+
 # ── Traffic monitor ───────────────────────────────────────────────────────────
 
 class TrafficMonitor:
     """Thread-safe in-memory tracker for query and token usage.
 
     One shared instance per process — use :func:`get_traffic_monitor`.
-
-    Credentials should carry ``account_name``, ``qpm``, and ``tpm`` fields;
-    the request ``configs`` should carry ``user`` (default ``"default"``).
-    These are resolved by the caller (:class:`~ai_navigator.service.base_navigator.BaseNavigator`)
-    before calling the monitor.
     """
 
     def __init__(self) -> None:
@@ -99,24 +125,8 @@ class TrafficMonitor:
         self,
         account_name: str,
         user: str,
-        configs: dict,
     ) -> tuple[int, str, str]:
-        """Record a new incoming request.
-
-        Flow:
-        1. Snapshot pre-increment stats.
-        2. Call the registered traffic hook (may raise to block).
-        3. Compute token estimate (2 × current-user average, min 5 000).
-        4. Increment all four counters (account/user × minute/day).
-
-        Parameters
-        ----------
-        account_name:
-            From ``credentials[model_name][0]["account_name"]``.
-        user:
-            From ``configs.get("user", "default")``.
-        configs:
-            Full request configs dict (forwarded to the hook as-is).
+        """Increment counters for a new request.
 
         Returns
         -------
@@ -125,19 +135,12 @@ class TrafficMonitor:
         """
         mk = _minute_key()
         dk = _day_key()
-
-        # Snapshot before increment — hook sees current state
-        stats = self._snapshot(account_name, user, mk, dk)
-        _invoke_hook(configs, stats)
-
-        # Estimate and increment
         estimated = self._estimate(account_name, user, mk)
         with self._lock:
             _inc(self._account[(account_name, mk)],         1, estimated, 0)
             _inc(self._account[(account_name, dk)],         1, estimated, 0)
             _inc(self._user[(account_name, user, mk)],      1, estimated, 0)
             _inc(self._user[(account_name, user, dk)],      1, estimated, 0)
-
         _log.debug("enter  acct=%s user=%s est=%d", account_name, user, estimated)
         return estimated, mk, dk
 
@@ -160,20 +163,17 @@ class TrafficMonitor:
             ``result["usage"]`` dict with keys ``prompt_tokens``,
             ``completion_tokens``, etc.
         minute_key / day_key:
-            The keys returned by the matching :meth:`on_request_enter` call
-            (capturing the minute at request start avoids off-by-one on
-            minute boundaries).
+            The keys returned by the matching :meth:`on_request_enter` call.
         """
         actual_in  = usage.get("prompt_tokens",      0)
         actual_out = usage.get("completion_tokens",   0)
-        correction = actual_in - estimated            # may be negative
+        correction = actual_in - estimated
 
         with self._lock:
             _inc(self._account[(account_name, minute_key)],      0, correction, actual_out)
             _inc(self._account[(account_name, day_key)],         0, correction, actual_out)
             _inc(self._user[(account_name, user, minute_key)],   0, correction, actual_out)
             _inc(self._user[(account_name, user, day_key)],      0, correction, actual_out)
-
         _log.debug("complete acct=%s user=%s in=%d out=%d", account_name, user, actual_in, actual_out)
 
     def get_stats(self, account_name: str, user: str = "default") -> TrafficStats:
@@ -228,34 +228,91 @@ def get_traffic_monitor() -> TrafficMonitor:
     return _monitor
 
 
-# ── Entry Points hook ─────────────────────────────────────────────────────────
+# ── Rate limiter entry point ──────────────────────────────────────────────────
 
-_hook_cache: list[Callable] | None = None
-_hook_lock = Lock()
+_limiter_cache: RequestRateLimiter | None = None
+_limiter_lock = Lock()
 
 
-def _load_hooks() -> list[Callable]:
-    global _hook_cache
-    if _hook_cache is not None:
-        return _hook_cache
-    with _hook_lock:
-        if _hook_cache is not None:
-            return _hook_cache
-        hooks: list[Callable] = []
-        for ep in entry_points(group="ai_navigator.traffic"):
+def get_rate_limiter() -> RequestRateLimiter:
+    """Return the active :class:`RequestRateLimiter`.
+
+    Loads from the first ``ai_navigator.traffic`` entry point; falls back to
+    the default allow-all limiter if none is registered.
+    """
+    global _limiter_cache
+    if _limiter_cache is not None:
+        return _limiter_cache
+    with _limiter_lock:
+        if _limiter_cache is not None:
+            return _limiter_cache
+        eps = list(entry_points(group="ai_navigator.traffic"))
+        if not eps:
+            _limiter_cache = _default_limiter
+        else:
             try:
-                hooks.append(ep.load())
-                _log.info("traffic hook loaded: %s", ep.name)
+                _limiter_cache = eps[0].load()
+                _log.info("rate limiter loaded: %s", eps[0].name)
             except Exception as exc:
-                _log.warning("traffic hook '%s' failed to load: %s", ep.name, exc)
-        _hook_cache = hooks
-    return _hook_cache
+                _log.warning("rate limiter '%s' failed to load: %s — using default", eps[0].name, exc)
+                _limiter_cache = _default_limiter
+    return _limiter_cache
 
 
-def _invoke_hook(configs: dict, stats: TrafficStats) -> None:
-    """Call every registered traffic hook. Propagates exceptions to block requests."""
-    for hook in _load_hooks():
-        hook(configs, stats)  # intentionally not caught — raise to block
+# ── Decorator ────────────────────────────────────────────────────────────────
+
+def traffic_monitor(fn: Callable) -> Callable:
+    """Decorator for :class:`~ai_navigator.service.base_navigator.BaseNavigator`
+    ``chat`` and ``response`` methods.
+
+    Responsibilities:
+    - Invoke the :class:`RequestRateLimiter` hook before the call.
+    - Record request enter / complete for traffic reporting.
+    - Catch any exception from the wrapped method and convert it to an error
+      :class:`~ai_navigator.infra.types.NavigatorResult`.
+
+    The wrapped method must return a :class:`~ai_navigator.infra.types.NavigatorResult`.
+    """
+    @wraps(fn)
+    def wrapper(self: Any, request_data: dict, params: Any = None, configs: Any = None) -> NavigatorResult:
+        configs = configs or {}
+        model_name = configs.get("model_name", "")
+        user = configs.get("user", "default")
+        account_name = self._get_account_name(model_name) if model_name else "unknown"
+
+        monitor = get_traffic_monitor()
+
+        # Rate limiter sees pre-request stats (before incrementing)
+        stats = monitor.get_stats(account_name, user)
+        try:
+            allowed = get_rate_limiter()(configs, stats)
+        except Exception as exc:
+            return _err_result(str(exc), type(exc).__name__)
+
+        if not allowed:
+            return _err_result("request blocked by rate limiter", "RateLimited")
+
+        # Record enter — counters increment after limiter allows
+        estimated, mk, dk = monitor.on_request_enter(account_name, user)
+
+        try:
+            nav_result: NavigatorResult = fn(self, request_data, params=params, configs=configs)
+            usage = nav_result.get("usage", {}) if isinstance(nav_result, dict) else {}
+            monitor.on_request_complete(account_name, user, estimated, usage, mk, dk)
+            return nav_result
+        except Exception as exc:
+            monitor.on_request_complete(account_name, user, estimated, {}, mk, dk)
+            return _err_result(str(exc), type(exc).__name__)
+
+    return wrapper
+
+
+def _err_result(msg: str, error_type: str) -> NavigatorResult:
+    return NavigatorResult(
+        result=None,
+        usage=TokenUsage(),
+        status={"ok": False, "error": msg, "error_type": error_type},
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

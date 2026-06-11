@@ -1,11 +1,10 @@
 from __future__ import annotations
-import time
 from abc import ABC
 from typing import Any, ClassVar, Iterator, Literal
 
-from ai_navigator.infra.exceptions import AINavigatorError, RateLimitError
 from ai_navigator.infra.types import Message, Response
 from ai_navigator.monitor.logger import get_logger
+from ai_navigator.server.retry import RetryPolicy
 
 
 class BaseServer(ABC):
@@ -35,14 +34,14 @@ class BaseServer(ABC):
         self,
         model: str,
         credentials: dict[str, Any],
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
         **kwargs: Any,
     ) -> None:
         self.model = model
         self.credentials = credentials
-        self._max_retries = max_retries
-        self._retry_delay = retry_delay
+        from ai_navigator.param.const_configs import ConstConfigs
+        self._cred_retry_max: int = int(credentials.get("retry_max", ConstConfigs.RETRY_MAX))
+        self._retry_wait: float = float(credentials.get("retry_wait", ConstConfigs.RETRY_WAIT))
+        self._retry_backoff: float = float(credentials.get("retry_backoff", ConstConfigs.RETRY_BACKOFF))
         self._conversation: list[Message] = []
         self.logger = get_logger(f"{self.provider}.{model}")
         self._setup(**kwargs)
@@ -103,13 +102,25 @@ class BaseServer(ABC):
     ) -> Response:
         """Validate support, apply retry logic, dispatch to ``_{method}``.
 
-        All public call methods (``chat``, ``response``, …) on concrete
-        servers should go through here so that retry, logging, and storage
-        are applied uniformly.
+        Pops the reserved ``_retry_max`` kwarg (set by
+        :class:`~ai_navigator.service.base_navigator.BaseNavigator`) before
+        forwarding to the provider implementation.  The effective retry count
+        is ``min(credentials.retry_max, _retry_max)``.
         """
         self._require_method(method)
+        request_retry_max: int | None = kwargs.pop("_retry_max", None)
+        effective_max = (
+            min(self._cred_retry_max, request_retry_max)
+            if request_retry_max is not None
+            else self._cred_retry_max
+        )
         fn = getattr(self, f"_{method}")
-        response = self._with_retry(fn, messages, **kwargs)
+        policy = RetryPolicy(
+            max_retries=effective_max,
+            initial_wait=self._retry_wait,
+            backoff=self._retry_backoff,
+        )
+        response = policy.execute(fn, messages, **kwargs)
         self.logger.debug(
             "%s ok | model=%s finish=%s tokens=%s",
             method,
@@ -135,25 +146,3 @@ class BaseServer(ABC):
             msgs = [{"role": "system", "content": system}, *msgs]
         return msgs
 
-    def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Response:
-        last_exc: RateLimitError | None = None
-        for attempt in range(1, self._max_retries + 1):
-            try:
-                return fn(*args, **kwargs)
-            except RateLimitError as exc:
-                delay = exc.retry_after or self._retry_delay * attempt
-                self.logger.warning(
-                    "rate limit on attempt %d/%d — retrying in %.1fs",
-                    attempt,
-                    self._max_retries,
-                    delay,
-                )
-                time.sleep(delay)
-                last_exc = exc
-            except AINavigatorError:
-                raise
-            except Exception as exc:
-                self.logger.error("unexpected provider error: %s", exc)
-                raise
-        assert last_exc is not None
-        raise last_exc
