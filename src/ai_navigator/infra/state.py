@@ -26,15 +26,20 @@ class RequestState:
         Raw input descriptor.  One of three shapes:
 
         ``{"message": str | list}``
-            User-assembled content.  Value is a bare string or a list
-            of content-part dicts (keys: ``type``, ``text`` / ``image_url`` …).
+            User-only input — the AI has not replied yet.  Value is a bare
+            string or a list of content-part dicts (text, images, …).
+            Use for straightforward Q&A where no prior context is needed.
 
         ``{"conversation": list[Message]}``
-            Fully pre-assembled conversation passed through unchanged.
+            Full back-and-forth history with alternating ``user`` /
+            ``assistant`` turns, passed through unchanged.  Use when the
+            model needs to be aware of prior context.
 
         ``{"prompt": list, "data_dict": dict}``
-            YAML-driven prompt.  ``"prompt"`` value is the parsed template
-            list; ``data_dict`` supplies dynamic substitutions.
+            Prompt-engineering preset (zero-shot or few-shot).  The
+            ``"prompt"`` value is a YAML-parsed template list that encodes
+            the task structure (system instructions, examples, placeholders);
+            ``data_dict`` supplies the dynamic values at call time.
 
     params:
         LLM / server parameters passed directly through to the provider call.

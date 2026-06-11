@@ -155,11 +155,11 @@ def get_navigator_class() -> type:
 
 `_preprocess(request_data)` handles the three `request_data` shapes:
 
-| Key present | Action |
-|---|---|
-| `"message"` | wrap value (str/list) in `[user_message(value)]` |
-| `"conversation"` | pass value (list) through unchanged |
-| `"prompt"` | call `PromptBuilder(value).build(data_dict=request_data.get("data_dict", {}))` |
+| Key | Semantic | Action |
+|---|---|---|
+| `"message"` | User-only input — AI has not replied yet. One string or a list of content parts (text/image). | wrap value in `[user_message(value)]` |
+| `"conversation"` | Full back-and-forth history with alternating `user`/`assistant` turns. | pass value through unchanged |
+| `"prompt"` | PE-designed preset task (zero-shot or few-shot). Template structure lives in YAML; call site supplies only dynamic data via `"data_dict"`. | `PromptBuilder(value).build(data_dict=request_data.get("data_dict", {}))` |
 
 ### `navigator.py` — Navigator
 

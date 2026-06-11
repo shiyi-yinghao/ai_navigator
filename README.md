@@ -95,9 +95,14 @@ result = nav.response(
 
 | Key | Value type | Description |
 |---|---|---|
-| `"message"` | `str \| list` | Single user message |
-| `"conversation"` | `list[Message]` | Full multi-turn conversation |
-| `"prompt"` | `list` | YAML template list; pair with `"data_dict"` |
+| `"message"` | `str \| list` | One or more user messages — the AI has not replied yet |
+| `"conversation"` | `list[Message]` | Full back-and-forth dialogue between user and assistant |
+| `"prompt"` | `list` | Prompt-engineering preset (zero-shot or few-shot); pair with `"data_dict"` |
+
+**Design rationale:**
+- `message` — the user side only. You can send one string or a list of content parts (text + images), but the exchange hasn't started yet. Use this for straightforward Q&A.
+- `conversation` — a full dialogue history with alternating `user` / `assistant` turns. Use this when you need the model to be aware of prior context.
+- `prompt` — a fully designed prompt template loaded from YAML. Encodes the task structure (system instruction, examples, placeholders) so the call site only supplies the dynamic data via `data_dict`. Supports zero-shot and few-shot patterns.
 
 ```python
 from ai_navigator import user_message, system_message
@@ -530,9 +535,14 @@ result = nav.response(
 
 | Key | Value 类型 | 说明 |
 |---|---|---|
-| `"message"` | `str \| list` | 单条用户消息 |
-| `"conversation"` | `list[Message]` | 完整多轮对话 |
-| `"prompt"` | `list` | YAML 模板列表，配合 `"data_dict"` 使用 |
+| `"message"` | `str \| list` | 用户发送的消息，AI 尚未回复 |
+| `"conversation"` | `list[Message]` | 用户与助手的完整多轮对话 |
+| `"prompt"` | `list` | Prompt Engineering 预设任务，配合 `"data_dict"` 使用 |
+
+**设计思路：**
+- `message` — 纯用户侧输入。可以是一段文字，也可以是包含文字和图片的内容列表，但 AI 尚未介入，对话还未开始。适合直接问答场景。
+- `conversation` — 完整的多轮对话历史，`user` 和 `assistant` 交替出现。适合需要模型感知上下文的场景。
+- `prompt` — 从 YAML 加载的 PE（Prompt Engineering）模板，将任务结构（系统指令、示例、占位符）预先设计好，调用时只需通过 `data_dict` 传入动态数据。支持 zero-shot 和 few-shot 两种模式。
 
 ```python
 from ai_navigator import user_message, system_message
