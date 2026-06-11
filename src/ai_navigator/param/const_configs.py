@@ -33,7 +33,10 @@ class ConstConfigs:
     STORAGE_PATH: str = os.environ.get("AI_NAVIGATOR_STORAGE_PATH", "ai_navigator.db")
     CREDENTIALS_PATH: str = os.environ.get("AI_NAVIGATOR_CREDENTIALS_PATH", "credentials.yaml")
     LOGGING_STREAM: bool = os.environ.get("AI_NAVIGATOR_LOGGING_STREAM", "true").lower() != "false"
-    BATCH_SIZE: int = int(os.environ.get("AI_NAVIGATOR_BATCH_SIZE", "50"))
+    BATCH_SIZE: int    = int(os.environ.get("AI_NAVIGATOR_BATCH_SIZE",     "50"))
+    RETRY_MAX: int     = int(os.environ.get("AI_NAVIGATOR_RETRY_MAX",      "3"))
+    RETRY_WAIT: float  = float(os.environ.get("AI_NAVIGATOR_RETRY_WAIT",   "1.0"))
+    RETRY_BACKOFF: float = float(os.environ.get("AI_NAVIGATOR_RETRY_BACKOFF", "2.0"))
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:

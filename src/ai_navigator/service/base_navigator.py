@@ -74,21 +74,10 @@ class BaseNavigator:
         params:
             Provider call parameters (temperature, max_tokens, …).
         configs:
-            Must contain ``model_name``.
+            Must contain ``model_name``.  Optional: ``user`` (default
+            ``"default"``).
         """
-        params = params or {}
-        configs = configs or {}
-        self._log_stage("request_receive", request_data)
-        model_name = configs.get("model_name", "")
-        if not model_name:
-            raise ValueError("configs must contain 'model_name'.")
-        server = self._get_server(model_name)
-        messages = self._preprocess(request_data)
-        self._log_stage("request_preprocess", messages)
-        result = server.chat(messages, **params)
-        self._log_stage("request_executed", result)
-        self._log_stage("request_returned", result)
-        return result
+        return self._dispatch("chat", request_data, params, configs)
 
     def response(
         self,
@@ -105,19 +94,40 @@ class BaseNavigator:
         params:
             Provider call parameters (response_format, schema, …).
         configs:
-            Must contain ``model_name``.
+            Must contain ``model_name``.  Optional: ``user`` (default
+            ``"default"``).
         """
+        return self._dispatch("response", request_data, params, configs)
+
+    def _dispatch(self, method: str, request_data: dict, params: Any, configs: Any) -> Any:
         params = params or {}
         configs = configs or {}
         self._log_stage("request_receive", request_data)
+
         model_name = configs.get("model_name", "")
         if not model_name:
             raise ValueError("configs must contain 'model_name'.")
-        server = self._get_server(model_name)
-        messages = self._preprocess(request_data)
+        user = configs.get("user", "default")
+
+        server       = self._get_server(model_name)
+        account_name = self._get_account_name(model_name)
+        messages     = self._preprocess(request_data)
         self._log_stage("request_preprocess", messages)
-        result = server.response(messages, **params)
+
+        # Traffic monitoring — enter (hook may raise to block)
+        from ai_navigator.monitor.traffic import get_traffic_monitor
+        monitor = get_traffic_monitor()
+        estimated, mk, dk = monitor.on_request_enter(account_name, user, configs)
+
+        # Provider call with retry on RateLimitError
+        from ai_navigator.service.retry import get_retry_policy
+        result = get_retry_policy().execute(getattr(server, method), messages, **params)
         self._log_stage("request_executed", result)
+
+        # Traffic monitoring — complete
+        usage = result.get("usage", {}) if isinstance(result, dict) else {}
+        monitor.on_request_complete(account_name, user, estimated, usage, mk, dk)
+
         self._log_stage("request_returned", result)
         return result
 
@@ -152,6 +162,11 @@ class BaseNavigator:
         server = server_cls(model=model, credentials=cred)
         self._server_cache[model_name] = server
         return server
+
+    def _get_account_name(self, model_name: str) -> str:
+        creds_list = self._all_creds.get(model_name, [{}])
+        cred = creds_list[0] if creds_list else {}
+        return cred.get("account_name", model_name)
 
     # ── Request preprocessing ─────────────────────────────────────────────────
 
