@@ -25,7 +25,7 @@ from ai_navigator.batch_inference.online import OnlineBatch
 from ai_navigator.batch_inference.offline import OfflineBatch
 from ai_navigator.batch_inference.storage import BatchStorageProtocol, get_batch_storage_class
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     # Core
