@@ -1,9 +1,8 @@
 """BaseServer — abstract base for all LLM provider servers.
 
-Infrastructure (retry, logging) is applied automatically to any method
-decorated with :func:`server_method`.  Concrete servers declare their
-capabilities by decorating the relevant methods — no other coupling to
-``BaseServer`` is required.
+Infrastructure (normalisation, retry, logging) is applied automatically to any
+method decorated with :func:`server_method`.  Concrete servers declare their
+capabilities by decorating the relevant methods and contain only provider logic.
 
 Example
 -------
@@ -13,12 +12,12 @@ Example
         provider = "my_llm"
 
         @server_method
-        def chat(self, messages, **kwargs) -> Response:
-            # pure provider logic — no retry, no logging
+        def chat(self, messages: list[Message], model: str, param: dict) -> NavigatorResult:
+            # pure provider logic — messages already normalised, no retry needed
             ...
 
         @server_method
-        def response(self, messages, **kwargs) -> Response:
+        def response(self, messages: list[Message], model: str, param: dict) -> NavigatorResult:
             ...
 """
 from __future__ import annotations
@@ -28,9 +27,9 @@ from abc import ABC
 from functools import wraps
 from typing import Any, ClassVar, Literal
 
-from ai_navigator.infra.types import Message, NavigatorResult
+from ai_navigator.state.data_class import Message, NavigatorResult
 from ai_navigator.monitor.logger import get_logger
-from ai_navigator.monitor.status_codes import StatusCode
+from ai_navigator.state.status import StatusCode
 
 
 # ── Public decorator ──────────────────────────────────────────────────────────
@@ -38,35 +37,83 @@ from ai_navigator.monitor.status_codes import StatusCode
 def server_method(fn):
     """Mark a method as a server call.
 
-    ``BaseServer.__init_subclass__`` wraps every decorated method with retry
-    and logging.  The method itself should contain only provider logic.
+    ``BaseServer.__init_subclass__`` wraps every decorated method with
+    normalisation, retry, and logging.  The method itself should contain only
+    provider logic, and may assume ``messages`` is already a ``list[Message]``.
     """
     fn._is_server_method = True
     return fn
 
 
+# ── Shared result helpers ─────────────────────────────────────────────────────
+
+def ok_result(text: str, usage: dict, reference: dict) -> NavigatorResult:
+    return {
+        "result": text,
+        "status": {
+            "status_code": StatusCode.OK,
+            "status_desc": StatusCode.OK.desc,
+            "status_detail": "",
+        },
+        "usage": usage,
+        "reference": reference,
+    }
+
+
+def err_result(code: StatusCode, detail: str) -> NavigatorResult:
+    return {
+        "result": "",
+        "status": {
+            "status_code": code,
+            "status_desc": code.desc,
+            "status_detail": detail,
+        },
+        "usage": {},
+        "reference": {},
+    }
+
+
+# ── Normalisation ─────────────────────────────────────────────────────────────
+
+def normalise_messages(messages: list[Message] | str) -> list[Message]:
+    """Coerce a bare string to a single-turn user message list."""
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+    return list(messages)
+
+
 # ── Infrastructure wrapper ────────────────────────────────────────────────────
 
 def _wrap_infrastructure(fn):
-    """Wrap *fn* with status-code-based retry and logging.
+    """Wrap *fn* with normalisation, status-code-based retry, and logging.
 
-    Retries while the returned :class:`~ai_navigator.infra.types.NavigatorResult`
-    carries ``status_code == 429`` (Too Many Requests), up to the effective
-    retry limit: ``min(credentials.retry_max, _retry_max kwarg)``.
+    The wrapper:
+    1. Normalises ``messages`` to ``list[Message]`` (standard ChatGPT format).
+    2. Copies ``param``, extracts the reserved ``_retry_max`` key (if present),
+       then passes the clean copy to the server method.
+    3. Retries while ``status_code == 429``, up to ``effective`` attempts.
 
-    The server method itself is responsible for converting all provider
-    exceptions into ``NavigatorResult`` — no exceptions cross the server
-    boundary under normal operation.
+    The server method itself converts all provider exceptions into
+    ``NavigatorResult`` — no exceptions cross the server boundary.
     """
     @wraps(fn)
-    def wrapper(self, *args, **kwargs):
-        retry_max = kwargs.pop("_retry_max", self._cred_retry_max)
-        effective = min(self._cred_retry_max, int(retry_max))
+    def wrapper(
+        self,
+        messages: list[Message] | str,
+        model: str,
+        param: dict,
+    ) -> NavigatorResult:
+        msgs = normalise_messages(messages)
+
+        # Extract infrastructure key without mutating the caller's dict.
+        effective_param = dict(param)
+        retry_max = int(effective_param.pop("_retry_max", self._cred_retry_max))
+        effective = min(self._cred_retry_max, retry_max)
 
         wait = self._retry_wait
         result: NavigatorResult | None = None
         for attempt in range(effective + 1):
-            result = fn(self, *args, **kwargs)
+            result = fn(self, msgs, model, effective_param)
             if result["status"]["status_code"] != StatusCode.TOO_MANY_REQUESTS:
                 break
             if attempt < effective:
@@ -78,7 +125,7 @@ def _wrap_infrastructure(fn):
                 wait *= self._retry_backoff
 
         if result["status"]["status_code"] == StatusCode.OK:
-            self.logger.debug("%s ok | model=%s", fn.__name__, self.model)
+            self.logger.debug("%s ok | model=%s", fn.__name__, model)
         return result
 
     wrapper._is_server_method = True
@@ -95,8 +142,12 @@ class BaseServer(ABC):
     ----------
     - Set ``provider`` as a class variable.
     - Override ``_setup(**kwargs)`` to initialise the SDK client.
-    - Implement provider methods and decorate each with :func:`server_method`.
-      ``_supported_methods`` is populated automatically from those decorators.
+    - Implement ``chat`` and/or ``response`` with the fixed signature::
+
+          def chat(self, messages: list[Message], model: str, param: dict) -> NavigatorResult:
+              ...
+
+      Decorate each with :func:`server_method`.
     """
 
     provider: ClassVar[str] = "unknown"
@@ -122,7 +173,6 @@ class BaseServer(ABC):
         self,
         model: str,
         credentials: dict[str, Any],
-        **kwargs: Any,
     ) -> None:
         self.model = model
         self.credentials = credentials
@@ -132,9 +182,9 @@ class BaseServer(ABC):
         self._retry_backoff: float  = float(credentials.get("retry_backoff", ConstConfigs.RETRY_BACKOFF))
         self._conversation: list[Message] = []
         self.logger = get_logger(f"{self.provider}.{model}")
-        self._setup(**kwargs)
+        self._setup()
 
-    def _setup(self, **kwargs: Any) -> None:
+    def _setup(self) -> None:
         """Initialise the provider SDK client (called once at end of ``__init__``)."""
 
     # ── Method-support query ──────────────────────────────────────────────────
@@ -162,19 +212,3 @@ class BaseServer(ABC):
     @property
     def conversation(self) -> list[Message]:
         return list(self._conversation)
-
-    # ── Shared helpers ────────────────────────────────────────────────────────
-
-    def _normalise(
-        self,
-        messages: list[Message] | str,
-        system: str | None = None,
-    ) -> list[Message]:
-        """Coerce a bare string or message list; prepend system message if given."""
-        if isinstance(messages, str):
-            msgs: list[Message] = [{"role": "user", "content": messages}]
-        else:
-            msgs = list(messages)
-        if system:
-            msgs = [{"role": "system", "content": system}, *msgs]
-        return msgs

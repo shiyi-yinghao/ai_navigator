@@ -37,9 +37,9 @@ from __future__ import annotations
 from typing import Any, Union
 
 from ai_navigator.service.base_navigator import get_navigator_class
-from ai_navigator.infra.types import (
+from ai_navigator.state.data_class import (
     ContentPart, Message, TokenUsage, Response,
-    NavigatorResult, CallStatus,
+    NavigatorResult, StatusDetail,
     make_message, make_content_part,
 )
 
@@ -50,7 +50,7 @@ __all__ = [
     "TokenUsage",
     "Response",
     "NavigatorResult",
-    "CallStatus",
+    "StatusDetail",
     "make_content_part",
     "make_message",
     "user_message",

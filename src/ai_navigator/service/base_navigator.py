@@ -20,8 +20,8 @@ import logging
 from importlib.metadata import entry_points
 from typing import Any
 
-from ai_navigator.infra.types import Message, NavigatorResult, make_message
-from ai_navigator.infra.exceptions import AINavigatorError
+from ai_navigator.state.data_class import Message, NavigatorResult, make_message
+from ai_navigator.state.status import StatusCode, describe as status_describe
 from ai_navigator.param.const_configs import ConstConfigs
 from ai_navigator.param.credentials import get_credentials_class
 from ai_navigator.monitor.logger import get_logger
@@ -29,6 +29,19 @@ from ai_navigator.monitor.traffic import traffic_monitor
 from ai_navigator.server.registry import build_registry
 
 _log_module = logging.getLogger("ai_navigator.service.navigator")
+
+
+def _make_err(code: StatusCode, detail: str) -> NavigatorResult:
+    return {
+        "result": "",
+        "status": {
+            "status_code": code,
+            "status_desc": status_describe(int(code)),
+            "status_detail": detail,
+        },
+        "usage": {},
+        "reference": {},
+    }
 
 
 class BaseNavigator:
@@ -79,13 +92,6 @@ class BaseNavigator:
         configs:
             Must contain ``model_name``.  Optional: ``user`` (default
             ``"default"``), ``retry_max`` (capped by credentials ``retry_max``).
-
-        Returns
-        -------
-        NavigatorResult
-            ``result`` — content string
-            ``status`` — ``{"ok": True, ...}``
-            ``reference`` — usage, model, finish_reason
         """
         params = params or {}
         configs = configs or {}
@@ -93,14 +99,17 @@ class BaseNavigator:
 
         model_name = configs.get("model_name", "")
         if not model_name:
-            raise ValueError("configs must contain 'model_name'.")
+            return _make_err(StatusCode.INTERNAL_ERROR, "configs must contain 'model_name'")
 
-        server   = self._get_server(model_name)
-        messages = self._preprocess(request_data)
+        try:
+            server = self._get_server(model_name)
+            messages = self._preprocess(request_data)
+        except ValueError as exc:
+            return _make_err(StatusCode.INTERNAL_ERROR, str(exc))
+
         self._log_stage("request_preprocess", messages)
-
-        effective_retry = self._effective_retry(model_name, configs)
-        result = server.chat(messages, _retry_max=effective_retry, **params)
+        call_param = dict(params, _retry_max=self._effective_retry(model_name, configs))
+        result = server.chat(messages, model_name, call_param)
         self._log_stage("request_executed", result)
         return result
 
@@ -121,13 +130,6 @@ class BaseNavigator:
             Provider call parameters (response_format, schema, …).
         configs:
             Must contain ``model_name``.  Optional: ``user``, ``retry_max``.
-
-        Returns
-        -------
-        NavigatorResult
-            ``result`` — content string
-            ``status`` — ``{"ok": True, ...}``
-            ``reference`` — usage, model, finish_reason
         """
         params = params or {}
         configs = configs or {}
@@ -135,14 +137,17 @@ class BaseNavigator:
 
         model_name = configs.get("model_name", "")
         if not model_name:
-            raise ValueError("configs must contain 'model_name'.")
+            return _make_err(StatusCode.INTERNAL_ERROR, "configs must contain 'model_name'")
 
-        server   = self._get_server(model_name)
-        messages = self._preprocess(request_data)
+        try:
+            server = self._get_server(model_name)
+            messages = self._preprocess(request_data)
+        except ValueError as exc:
+            return _make_err(StatusCode.INTERNAL_ERROR, str(exc))
+
         self._log_stage("request_preprocess", messages)
-
-        effective_retry = self._effective_retry(model_name, configs)
-        result = server.response(messages, _retry_max=effective_retry, **params)
+        call_param = dict(params, _retry_max=self._effective_retry(model_name, configs))
+        result = server.response(messages, model_name, call_param)
         self._log_stage("request_executed", result)
         return result
 
@@ -154,7 +159,7 @@ class BaseNavigator:
 
         creds_list = self._all_creds.get(model_name)
         if not creds_list or not isinstance(creds_list, list):
-            raise AINavigatorError(
+            raise ValueError(
                 f"model_name '{model_name}' not found in credentials. "
                 f"Available: {list(self._all_creds)}"
             )
@@ -163,14 +168,14 @@ class BaseNavigator:
         provider_type = cred.get("provider_type", "")
         server_cls = self._registry.get(provider_type)
         if server_cls is None:
-            raise AINavigatorError(
+            raise ValueError(
                 f"Unknown provider_type '{provider_type}' for model_name "
                 f"'{model_name}'. Known providers: {list(self._registry)}"
             )
 
         model = cred.get("model", "")
         if not model:
-            raise AINavigatorError(
+            raise ValueError(
                 f"credentials for model_name '{model_name}' is missing 'model'."
             )
 
@@ -208,7 +213,7 @@ class BaseNavigator:
             builder = PromptBuilder(request_data["prompt"])
             return builder.build(data_dict=request_data.get("data_dict", {}))
 
-        raise AINavigatorError(
+        raise ValueError(
             "request_data must contain a 'message', 'conversation', or 'prompt' key."
         )
 

@@ -61,8 +61,8 @@ from importlib.metadata import entry_points
 from threading import Lock
 from typing import Any, Callable, Protocol, TypedDict
 
-from ai_navigator.infra.types import NavigatorResult
-from ai_navigator.monitor.status_codes import StatusCode
+from ai_navigator.state.data_class import NavigatorResult
+from ai_navigator.state.status import StatusCode
 
 _log = logging.getLogger("ai_navigator.monitor.traffic")
 
@@ -308,7 +308,7 @@ def traffic_monitor(fn: Callable) -> Callable:
 
 
 def _make_err(code: int, detail: str) -> NavigatorResult:
-    from ai_navigator.monitor.status_codes import describe as status_describe
+    from ai_navigator.state.status import describe as status_describe
     return NavigatorResult(
         result="",
         status={"status_code": code, "status_desc": status_describe(code), "status_detail": detail},

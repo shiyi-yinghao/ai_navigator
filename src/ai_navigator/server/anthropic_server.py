@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
-from ai_navigator.infra.types import ContentPart, Message, NavigatorResult
-from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
-from ai_navigator.server.base_server import BaseServer, server_method
+from ai_navigator.state.data_class import ContentPart, Message, NavigatorResult
+from ai_navigator.state.status import StatusCode
+from ai_navigator.server.base_server import BaseServer, server_method, ok_result, err_result, normalise_messages
 
 
 class AnthropicServer(BaseServer):
@@ -24,7 +24,7 @@ class AnthropicServer(BaseServer):
 
     provider: ClassVar[str] = "anthropic"
 
-    def _setup(self, **kwargs: Any) -> None:
+    def _setup(self) -> None:
         try:
             from anthropic import Anthropic
         except ImportError as exc:
@@ -39,56 +39,18 @@ class AnthropicServer(BaseServer):
     @server_method
     def chat(
         self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        messages: list[Message],
+        model: str,
+        param: dict,
     ) -> NavigatorResult:
         """Standard chat completion."""
-        system_text, user_msgs = _split_system(self._normalise(messages, system))
-        return self._call_api(system_text, user_msgs, **kwargs)
-
-    @server_method
-    def response(
-        self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
-    ) -> NavigatorResult:
-        """Structured-output completion (JSON via prompt instruction)."""
-        instruction = kwargs.pop(
-            "json_instruction",
-            "Respond ONLY with a valid JSON object. No prose, no markdown fences.",
-        )
-        system_text, user_msgs = _split_system(self._normalise(messages, system))
-        combined_system = "\n\n".join(filter(None, [system_text, instruction]))
-        return self._call_api(combined_system or None, user_msgs, **kwargs)
-
-    # ── Streaming (not a server_method — different return type) ──────────────
-
-    def stream(
-        self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
-    ) -> Iterator[str]:
-        """Token-by-token streaming."""
-        system_text, user_msgs = _split_system(self._normalise(messages, system))
-        yield from self._stream(system_text, user_msgs, **kwargs)
-
-    # ── Private helpers ───────────────────────────────────────────────────────
-
-    def _call_api(
-        self,
-        system_text: str | None,
-        user_msgs: list[Message],
-        **kwargs: Any,
-    ) -> NavigatorResult:
-        """Raw Anthropic API call — shared by chat() and response()."""
-        kwargs.setdefault("max_tokens", self._default_max_tokens)
+        system_text, user_msgs = _split_system(messages)
+        effective = dict(param)
+        effective.setdefault("max_tokens", self._default_max_tokens)
         create_kwargs: dict[str, Any] = dict(
-            model=self.model,
+            model=model,
             messages=[_to_anthropic_message(m) for m in user_msgs],
-            **kwargs,
+            **effective,
         )
         if system_text:
             create_kwargs["system"] = system_text
@@ -96,49 +58,90 @@ class AnthropicServer(BaseServer):
             resp = self._client.messages.create(**create_kwargs)
         except Exception as exc:
             code = _classify(exc)
-            self.logger.warning("Anthropic API error [%d %s]: %s", code, status_describe(code), exc)
-            return NavigatorResult(
-                result="",
-                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
-                usage={},
-                reference={},
-            )
+            self.logger.warning("Anthropic [%d]: %s", code, exc)
+            return err_result(code, str(exc))
         content = "".join(
             block.text for block in resp.content if hasattr(block, "text")
         )
-        return NavigatorResult(
-            result=content,
-            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
-            usage={
-                "prompt_tokens":      resp.usage.input_tokens,
-                "completion_tokens":  resp.usage.output_tokens,
-                "total_tokens":       resp.usage.input_tokens + resp.usage.output_tokens,
+        return ok_result(
+            content,
+            {
+                "prompt_tokens":     resp.usage.input_tokens,
+                "completion_tokens": resp.usage.output_tokens,
+                "total_tokens":      resp.usage.input_tokens + resp.usage.output_tokens,
             },
-            reference={"model": resp.model, "finish_reason": resp.stop_reason},
+            {"model": resp.model, "finish_reason": resp.stop_reason},
         )
 
-    def _stream(
+    @server_method
+    def response(
         self,
-        system_text: str | None,
-        user_msgs: list[Message],
-        **kwargs: Any,
-    ) -> Iterator[str]:
-        kwargs.setdefault("max_tokens", self._default_max_tokens)
-        stream_kwargs: dict[str, Any] = dict(
-            model=self.model,
+        messages: list[Message],
+        model: str,
+        param: dict,
+    ) -> NavigatorResult:
+        """Structured-output completion (JSON via prompt instruction)."""
+        effective = dict(param)
+        instruction = effective.pop(
+            "json_instruction",
+            "Respond ONLY with a valid JSON object. No prose, no markdown fences.",
+        )
+        system_text, user_msgs = _split_system(messages)
+        combined_system = "\n\n".join(filter(None, [system_text, instruction]))
+        effective.setdefault("max_tokens", self._default_max_tokens)
+        create_kwargs: dict[str, Any] = dict(
+            model=model,
             messages=[_to_anthropic_message(m) for m in user_msgs],
-            **kwargs,
+            **effective,
+        )
+        if combined_system:
+            create_kwargs["system"] = combined_system
+        try:
+            resp = self._client.messages.create(**create_kwargs)
+        except Exception as exc:
+            code = _classify(exc)
+            self.logger.warning("Anthropic [%d]: %s", code, exc)
+            return err_result(code, str(exc))
+        content = "".join(
+            block.text for block in resp.content if hasattr(block, "text")
+        )
+        return ok_result(
+            content,
+            {
+                "prompt_tokens":     resp.usage.input_tokens,
+                "completion_tokens": resp.usage.output_tokens,
+                "total_tokens":      resp.usage.input_tokens + resp.usage.output_tokens,
+            },
+            {"model": resp.model, "finish_reason": resp.stop_reason},
+        )
+
+    # ── Streaming ─────────────────────────────────────────────────────────────
+
+    def stream(
+        self,
+        messages: list[Message] | str,
+        model: str,
+        param: dict,
+    ) -> Iterator[str]:
+        """Token-by-token streaming."""
+        system_text, user_msgs = _split_system(normalise_messages(messages))
+        effective = dict(param)
+        effective.setdefault("max_tokens", self._default_max_tokens)
+        stream_kwargs: dict[str, Any] = dict(
+            model=model,
+            messages=[_to_anthropic_message(m) for m in user_msgs],
+            **effective,
         )
         if system_text:
             stream_kwargs["system"] = system_text
-        with self._client.messages.stream(**stream_kwargs) as stream:
-            for text in stream.text_stream:
+        with self._client.messages.stream(**stream_kwargs) as s:
+            for text in s.text_stream:
                 yield text
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _classify(exc: Exception) -> int:
+def _classify(exc: Exception) -> StatusCode:
     try:
         from anthropic import AuthenticationError, RateLimitError
         if isinstance(exc, AuthenticationError):

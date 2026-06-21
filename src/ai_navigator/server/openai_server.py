@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
-from ai_navigator.infra.types import ContentPart, Message, NavigatorResult, TokenUsage
-from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
-from ai_navigator.server.base_server import BaseServer, server_method
+from ai_navigator.state.data_class import ContentPart, Message, NavigatorResult, TokenUsage
+from ai_navigator.state.status import StatusCode
+from ai_navigator.server.base_server import BaseServer, server_method, ok_result, err_result, normalise_messages
 
 
 class OpenAIServer(BaseServer):
@@ -24,7 +24,7 @@ class OpenAIServer(BaseServer):
 
     provider: ClassVar[str] = "openai"
 
-    def _setup(self, **kwargs: Any) -> None:
+    def _setup(self) -> None:
         try:
             from openai import OpenAI
         except ImportError as exc:
@@ -41,84 +41,89 @@ class OpenAIServer(BaseServer):
     @server_method
     def chat(
         self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        messages: list[Message],
+        model: str,
+        param: dict,
     ) -> NavigatorResult:
         """Standard chat completion."""
-        return self._call_api(self._normalise(messages, system), **kwargs)
+        oai_msgs = [_to_openai_message(m) for m in messages]
+        try:
+            resp = self._client.chat.completions.create(
+                model=model,
+                messages=oai_msgs,  # type: ignore[arg-type]
+                **param,
+            )
+        except Exception as exc:
+            code = _classify(exc)
+            self.logger.warning("OpenAI [%d]: %s", code, exc)
+            return err_result(code, str(exc))
+        choice = resp.choices[0]
+        return ok_result(
+            choice.message.content or "",
+            _parse_usage(resp.usage),
+            {"model": resp.model, "finish_reason": choice.finish_reason},
+        )
 
     @server_method
     def response(
         self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        messages: list[Message],
+        model: str,
+        param: dict,
     ) -> NavigatorResult:
         """Structured-output completion.
 
-        Pass ``response_format`` in kwargs to control the output schema, e.g.::
+        Pass ``response_format`` in param to control the output schema, e.g.::
 
-            server.response(msgs, response_format={"type": "json_object"})
-            server.response(msgs, response_format={"type": "json_schema",
-                                                    "json_schema": schema_dict})
+            server.response(msgs, model, {"response_format": {"type": "json_object"}})
+            server.response(msgs, model, {"response_format": {"type": "json_schema",
+                                                               "json_schema": schema_dict}})
         """
-        kwargs.setdefault("response_format", {"type": "json_object"})
-        return self._call_api(self._normalise(messages, system), **kwargs)
+        effective = dict(param)
+        effective.setdefault("response_format", {"type": "json_object"})
+        oai_msgs = [_to_openai_message(m) for m in messages]
+        try:
+            resp = self._client.chat.completions.create(
+                model=model,
+                messages=oai_msgs,  # type: ignore[arg-type]
+                **effective,
+            )
+        except Exception as exc:
+            code = _classify(exc)
+            self.logger.warning("OpenAI [%d]: %s", code, exc)
+            return err_result(code, str(exc))
+        choice = resp.choices[0]
+        return ok_result(
+            choice.message.content or "",
+            _parse_usage(resp.usage),
+            {"model": resp.model, "finish_reason": choice.finish_reason},
+        )
 
     # ── Streaming ─────────────────────────────────────────────────────────────
 
     def stream(
         self,
         messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        model: str,
+        param: dict,
     ) -> Iterator[str]:
         """Token-by-token streaming."""
-        oai_msgs = [_to_openai_message(m) for m in self._normalise(messages, system)]
+        oai_msgs = [_to_openai_message(m) for m in normalise_messages(messages)]
         stream = self._client.chat.completions.create(
-            model=self.model,
+            model=model,
             messages=oai_msgs,  # type: ignore[arg-type]
             stream=True,
-            **kwargs,
+            **param,
         )
         for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
 
-    # ── Private helpers ───────────────────────────────────────────────────────
-
-    def _call_api(self, messages: list[Message], **kwargs: Any) -> NavigatorResult:
-        """Raw OpenAI API call — shared by chat() and response()."""
-        oai_msgs = [_to_openai_message(m) for m in messages]
-        try:
-            resp = self._client.chat.completions.create(
-                model=self.model,
-                messages=oai_msgs,  # type: ignore[arg-type]
-                **kwargs,
-            )
-        except Exception as exc:
-            code = _classify(exc)
-            self.logger.warning("OpenAI API error [%d %s]: %s", code, status_describe(code), exc)
-            return NavigatorResult(
-                result="",
-                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
-                usage={},
-                reference={},
-            )
-        choice = resp.choices[0]
-        return NavigatorResult(
-            result=choice.message.content or "",
-            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
-            usage=_parse_usage(resp.usage),
-            reference={"model": resp.model, "finish_reason": choice.finish_reason},
-        )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _classify(exc: Exception) -> int:
+def _classify(exc: Exception) -> StatusCode:
     try:
         from openai import AuthenticationError, RateLimitError
         if isinstance(exc, AuthenticationError):

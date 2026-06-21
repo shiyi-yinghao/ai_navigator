@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
-from ai_navigator.infra.types import Message, NavigatorResult, TokenUsage
-from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
-from ai_navigator.server.base_server import BaseServer, server_method
+from ai_navigator.state.data_class import Message, NavigatorResult, TokenUsage
+from ai_navigator.state.status import StatusCode
+from ai_navigator.server.base_server import BaseServer, server_method, ok_result, err_result, normalise_messages
 
 
 class GeminiServer(BaseServer):
@@ -24,7 +24,7 @@ class GeminiServer(BaseServer):
 
     provider: ClassVar[str] = "gemini"
 
-    def _setup(self, **kwargs: Any) -> None:
+    def _setup(self) -> None:
         try:
             import google.generativeai as genai
         except ImportError as exc:
@@ -44,80 +44,61 @@ class GeminiServer(BaseServer):
     @server_method
     def chat(
         self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        messages: list[Message],
+        model: str,
+        param: dict,
     ) -> NavigatorResult:
         """Standard chat completion."""
-        gemini_msgs, system_text = _to_gemini_messages(self._normalise(messages, system))
-        client = self._build_client(system=system_text)
+        gemini_msgs, system_text = _to_gemini_messages(messages)
+        client = self._build_client(model, system=system_text)
         try:
-            resp = client.generate_content(gemini_msgs, **kwargs)
+            resp = client.generate_content(gemini_msgs, **param)
         except Exception as exc:
             code = _classify(exc)
-            self.logger.warning("Gemini API error [%d %s]: %s", code, status_describe(code), exc)
-            return NavigatorResult(
-                result="",
-                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
-                usage={},
-                reference={},
-            )
-        return NavigatorResult(
-            result=resp.text,
-            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
-            usage=_parse_usage(resp),
-            reference={"model": self.model},
-        )
+            self.logger.warning("Gemini [%d]: %s", code, exc)
+            return err_result(code, str(exc))
+        return ok_result(resp.text, _parse_usage(resp), {"model": model})
 
     @server_method
     def response(
         self,
-        messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        messages: list[Message],
+        model: str,
+        param: dict,
     ) -> NavigatorResult:
         """Structured-output completion (JSON mode).
 
-        Pass ``response_schema`` in kwargs to enforce a specific schema via
+        Pass ``response_schema`` in param to enforce a specific schema via
         Gemini's ``generation_config.response_schema``.
         """
-        response_schema = kwargs.pop("response_schema", None)
-        gemini_msgs, system_text = _to_gemini_messages(self._normalise(messages, system))
-        json_config_kwargs: dict[str, Any] = {"response_mime_type": "application/json"}
+        effective = dict(param)
+        response_schema = effective.pop("response_schema", None)
+        gemini_msgs, system_text = _to_gemini_messages(messages)
+        json_cfg_kwargs: dict[str, Any] = {"response_mime_type": "application/json"}
         if response_schema is not None:
-            json_config_kwargs["response_schema"] = response_schema
-        json_gen_config = self._genai.GenerationConfig(**json_config_kwargs)
-        client = self._build_client(system=system_text, generation_config=json_gen_config)
+            json_cfg_kwargs["response_schema"] = response_schema
+        json_gen_config = self._genai.GenerationConfig(**json_cfg_kwargs)
+        client = self._build_client(model, system=system_text, generation_config=json_gen_config)
         try:
-            resp = client.generate_content(gemini_msgs, **kwargs)
+            resp = client.generate_content(gemini_msgs, **effective)
         except Exception as exc:
             code = _classify(exc)
-            self.logger.warning("Gemini API error [%d %s]: %s", code, status_describe(code), exc)
-            return NavigatorResult(
-                result="",
-                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
-                usage={},
-                reference={},
-            )
-        return NavigatorResult(
-            result=resp.text,
-            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
-            usage=_parse_usage(resp),
-            reference={"model": self.model},
-        )
+            self.logger.warning("Gemini [%d]: %s", code, exc)
+            return err_result(code, str(exc))
+        return ok_result(resp.text, _parse_usage(resp), {"model": model})
 
     # ── Streaming ─────────────────────────────────────────────────────────────
 
     def stream(
         self,
         messages: list[Message] | str,
-        system: str | None = None,
-        **kwargs: Any,
+        model: str,
+        param: dict,
     ) -> Iterator[str]:
         """Token-by-token streaming."""
-        gemini_msgs, system_text = _to_gemini_messages(self._normalise(messages, system))
-        client = self._build_client(system=system_text)
-        for chunk in client.generate_content(gemini_msgs, stream=True, **kwargs):
+        gemini_msgs, system_text = _to_gemini_messages(normalise_messages(messages))
+        client = self._build_client(model, system=system_text)
+        for chunk in client.generate_content(gemini_msgs, stream=True, **param):
             if chunk.text:
                 yield chunk.text
 
@@ -125,11 +106,12 @@ class GeminiServer(BaseServer):
 
     def _build_client(
         self,
+        model: str,
         system: str | None = None,
         generation_config: Any = None,
     ) -> Any:
         kwargs: dict[str, Any] = {
-            "model_name": self.model,
+            "model_name": model,
             "generation_config": generation_config or self._gen_config,
         }
         if system:
@@ -139,7 +121,7 @@ class GeminiServer(BaseServer):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _classify(exc: Exception) -> int:
+def _classify(exc: Exception) -> StatusCode:
     msg = str(exc).lower()
     if any(k in msg for k in ("api_key", "permission", "unauthorized", "unauthenticated")):
         return StatusCode.UNAUTHORIZED

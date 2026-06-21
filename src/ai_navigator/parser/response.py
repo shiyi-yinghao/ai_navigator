@@ -5,8 +5,7 @@ from typing import Any, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from ai_navigator.infra.exceptions import ParseError
-from ai_navigator.infra.types import Response
+from ai_navigator.state.data_class import Response
 from ai_navigator.monitor.logger import get_logger
 
 T = TypeVar("T", bound=BaseModel)
@@ -46,7 +45,7 @@ class ResponseParser:
         m = _BARE_RE.search(text)
         if m:
             return m.group(1).strip()
-        raise ParseError("No JSON found in LLM response", raw_content=text)
+        raise ValueError("No JSON found in LLM response")
 
     def parse_json(self, text: str) -> Any:
         """Extract and deserialise JSON from LLM response text."""
@@ -57,7 +56,7 @@ class ResponseParser:
             _logger.error(
                 "JSON decode failed: %s | snippet=%s", exc, json_str[:200]
             )
-            raise ParseError(f"Invalid JSON: {exc}", raw_content=json_str) from exc
+            raise ValueError(f"Invalid JSON: {exc}") from exc
 
     # ── Pydantic validation ──────────────────────────────────────────────────
 
@@ -74,9 +73,8 @@ class ResponseParser:
             _logger.error(
                 "Pydantic validation failed for %s: %s", model.__name__, exc
             )
-            raise ParseError(
-                f"Validation failed for {model.__name__}: {exc}",
-                raw_content=text,
+            raise ValueError(
+                f"Validation failed for {model.__name__}: {exc}"
             ) from exc
 
     # ── Convenience wrappers ─────────────────────────────────────────────────
@@ -93,7 +91,7 @@ class ResponseParser:
         """Like ``parse_json`` but returns ``default`` instead of raising."""
         try:
             return self.parse_json(text)
-        except ParseError as exc:
+        except ValueError as exc:
             _logger.warning("soft parse failure: %s", exc)
             return default
 
@@ -103,7 +101,7 @@ class ResponseParser:
         """Like ``parse_pydantic`` but returns ``default`` instead of raising."""
         try:
             return self.parse_pydantic(text, model)
-        except ParseError as exc:
+        except ValueError as exc:
             _logger.warning("soft pydantic parse failure: %s", exc)
             return default
 
@@ -140,10 +138,9 @@ class ResponseParser:
         candidates = allowed if case_sensitive else [c.lower() for c in allowed]
         check = value if case_sensitive else value.lower()
         if check not in candidates:
-            raise ParseError(
+            raise ValueError(
                 f"Value '{value}' is not a valid enum candidate. "
-                f"Expected one of: {allowed}",
-                raw_content=value,
+                f"Expected one of: {allowed}"
             )
         if not case_sensitive:
             idx = candidates.index(check)

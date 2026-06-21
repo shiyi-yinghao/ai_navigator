@@ -43,12 +43,7 @@ from typing import Any
 
 import yaml
 
-from ai_navigator.infra.exceptions import AINavigatorError
-from ai_navigator.infra.types import ContentPart, Message
-
-
-class PromptError(AINavigatorError):
-    pass
+from ai_navigator.state.data_class import ContentPart, Message
 
 
 class PromptBuilder:
@@ -64,7 +59,7 @@ class PromptBuilder:
 
     def __init__(self, template: list[dict[str, Any]]) -> None:
         if not isinstance(template, list):
-            raise PromptError("Prompt template must be a YAML list of message blocks")
+            raise ValueError("Prompt template must be a YAML list of message blocks")
         self._template = template
 
     # ── Constructors ─────────────────────────────────────────────────────────
@@ -74,7 +69,7 @@ class PromptBuilder:
         try:
             parsed = yaml.safe_load(yaml_str)
         except yaml.YAMLError as exc:
-            raise PromptError(f"Invalid prompt YAML: {exc}") from exc
+            raise ValueError(f"Invalid prompt YAML: {exc}") from exc
         return cls(parsed or [])
 
     @classmethod
@@ -97,7 +92,7 @@ class PromptBuilder:
         messages: list[Message] = []
         for idx, block in enumerate(self._template):
             if not isinstance(block, dict):
-                raise PromptError(f"Template block {idx} is not a mapping")
+                raise ValueError(f"Template block {idx} is not a mapping")
             role: str = block.get("role", "user")
             parts_spec: list[dict[str, Any]] = block.get("message", [])
             parts = self._build_parts(parts_spec, dd, block_idx=idx)
@@ -119,7 +114,7 @@ class PromptBuilder:
         parts: list[ContentPart] = []
         for i, item in enumerate(specs):
             if not isinstance(item, dict):
-                raise PromptError(
+                raise ValueError(
                     f"Content part {i} in block {block_idx} is not a mapping"
                 )
             part_type: str = item.get("type", "")
@@ -131,7 +126,7 @@ class PromptBuilder:
                 key = item.get("key", "")
                 raw = data_dict.get(key, "")
             else:
-                raise PromptError(
+                raise ValueError(
                     f"Unknown content-part type '{part_type}' in block {block_idx}, "
                     "part {i}. Must start with 'const_' or 'dynamic_'."
                 )

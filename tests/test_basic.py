@@ -5,7 +5,6 @@ import tempfile
 import pytest
 from pydantic import BaseModel
 
-from ai_navigator.infra.exceptions import ParseError, SchemaError
 from ai_navigator.infra.types import Message, TokenUsage, make_message
 from ai_navigator.monitor.storage import StorageBase, StoreStatus
 from ai_navigator.parser.response import ResponseParser
@@ -122,7 +121,7 @@ def test_parse_json_from_bare_prose():
 
 def test_parse_json_raises_when_missing():
     p = ResponseParser()
-    with pytest.raises(ParseError, match="No JSON"):
+    with pytest.raises(ValueError, match="No JSON"):
         p.parse_json("no json here at all")
 
 
@@ -146,33 +145,55 @@ def test_parse_pydantic():
 # ── StatusCode ────────────────────────────────────────────────────────────────
 
 def test_status_code_named_attrs():
-    from ai_navigator.monitor.status_codes import StatusCode
+    from ai_navigator.state.status import StatusCode
     assert StatusCode.OK == 200
     assert StatusCode.TOO_MANY_REQUESTS == 429
     assert StatusCode.CONTEXT_LIMIT == 601
 
 
+def test_status_code_is_int_subclass():
+    from ai_navigator.state.status import StatusCode
+    assert isinstance(StatusCode.OK, int)
+    assert isinstance(StatusCode.OK, StatusCode)
+    assert isinstance(StatusCode.TOO_MANY_REQUESTS, StatusCode)
+
+
+def test_status_code_singleton():
+    from ai_navigator.state.status import StatusCode
+    # Same object returned for same value
+    assert StatusCode[200] is StatusCode.OK
+    assert StatusCode[429] is StatusCode.TOO_MANY_REQUESTS
+
+
 def test_status_code_index_lookup():
-    from ai_navigator.monitor.status_codes import StatusCode
+    from ai_navigator.state.status import StatusCode
     assert StatusCode[200] == 200
     assert StatusCode[429] == 429
 
 
 def test_status_code_index_unknown_raises():
-    from ai_navigator.monitor.status_codes import StatusCode
+    from ai_navigator.state.status import StatusCode
     with pytest.raises(KeyError):
         StatusCode[9999]
 
 
 def test_status_code_register():
-    from ai_navigator.monitor.status_codes import StatusCode, describe
-    StatusCode.register(799, "Test Code")
-    assert StatusCode[799] == 799
-    assert describe(799) == "Test Code"
+    from ai_navigator.state.status import StatusCode, describe
+    code = StatusCode.register(798, "Test Code")
+    assert isinstance(code, StatusCode)
+    assert code == 798
+    assert StatusCode[798] == 798
+    assert describe(798) == "Test Code"
+
+
+def test_status_code_desc():
+    from ai_navigator.state.status import StatusCode
+    assert StatusCode.OK.desc == "Ok"
+    assert StatusCode.TOO_MANY_REQUESTS.desc == "Too Many Requests"
 
 
 def test_describe_unknown():
-    from ai_navigator.monitor.status_codes import describe
+    from ai_navigator.state.status import describe
     assert describe(9998) == "Unknown"
 
 
@@ -204,13 +225,13 @@ def test_schema_composer_from_yaml():
 
 
 def test_schema_composer_requires_meta_and_schema():
-    with pytest.raises(SchemaError, match="meta"):
+    with pytest.raises(ValueError, match="meta"):
         SchemaComposer.from_yaml("name: Foo\nfields: []")
 
 
 def test_schema_composer_schema_must_be_dict():
     bad = "meta:\n  name: X\nschema:\n  - name: foo\n    type: str\n"
-    with pytest.raises(SchemaError, match="dict"):
+    with pytest.raises(ValueError, match="dict"):
         SchemaComposer.from_yaml(bad)
 
 
@@ -318,7 +339,7 @@ schema:
     type: enum
 """
     sc = SchemaComposer.from_yaml(yaml_str)
-    with pytest.raises(SchemaError, match="choices"):
+    with pytest.raises(ValueError, match="choices"):
         sc.schema_conversion()
 
 
@@ -405,7 +426,7 @@ schema:
     type: str
 """
     sc = SchemaComposer.from_yaml(yaml_str)
-    with pytest.raises(SchemaError, match="dot"):
+    with pytest.raises(ValueError, match="dot"):
         sc.schema_conversion()
 
 

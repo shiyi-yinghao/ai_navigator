@@ -1,14 +1,7 @@
 import logging
 
-from ai_navigator.infra.exceptions import (
-    AINavigatorError,
-    ParseError,
-    PreProcessorError,
-    SchemaError,
-    StorageError,
-)
-from ai_navigator.infra.types import (
-    CallStatus,
+from ai_navigator.state.status import StatusDetail, StatusCode, describe as status_describe
+from ai_navigator.state.data_class import (
     ContentPart,
     Message,
     Response,
@@ -17,15 +10,16 @@ from ai_navigator.infra.types import (
     make_message,
 )
 from ai_navigator.infra.state import RequestState
-from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
 
-# Backward-compat alias: STATUS_DESCRIPTIONS is the live registry dict
+# Backward-compat aliases
+CallStatus = StatusDetail
 STATUS_DESCRIPTIONS = StatusCode._registry
 
 logging.getLogger("ai_navigator").addHandler(logging.NullHandler())
 
 __all__ = [
     # Types
+    "StatusDetail",
     "CallStatus",
     "ContentPart",
     "Message",
@@ -39,10 +33,4 @@ __all__ = [
     "StatusCode",
     "STATUS_DESCRIPTIONS",
     "status_describe",
-    # Exceptions
-    "AINavigatorError",
-    "ParseError",
-    "PreProcessorError",
-    "SchemaError",
-    "StorageError",
 ]

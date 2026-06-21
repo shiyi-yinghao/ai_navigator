@@ -12,7 +12,7 @@ result = nav.chat(
     configs={"model_name": "my_claude"},
 )
 print(result["result"])   # content string
-print(result["status"])   # {"status_code": 200, "status_desc": "Ok", "status_detail": ""}
+print(result["status"])   # {"status_code": StatusCode(200), "status_desc": "Ok", "status_detail": ""}
 ```
 
 ---
@@ -84,7 +84,7 @@ result = nav.chat(
 print(result["result"])                        # "Paris"
 print(result["usage"]["prompt_tokens"])        # 12
 print(result["reference"]["model"])            # "gpt-4o"
-print(result["status"]["status_code"])         # 200
+print(result["status"]["status_code"])         # StatusCode(200)
 ```
 
 ### Checking for errors
@@ -99,7 +99,7 @@ result = nav.chat(request_data=..., configs={"model_name": "my_gpt4"})
 if result["status"]["status_code"] == StatusCode.OK:
     process(result["result"])
 else:
-    print(result["status"]["status_code"])    # e.g. 429, 401, 500
+    print(result["status"]["status_code"])    # e.g. StatusCode(429)
     print(result["status"]["status_desc"])    # "Too Many Requests"
     print(result["status"]["status_detail"])  # full error message
 ```
@@ -123,7 +123,7 @@ result = nav.response(
 | `"prompt"` | `list` | Prompt-engineering preset (zero-shot or few-shot); pair with `"data_dict"` |
 
 ```python
-from ai_navigator.infra.types import make_message
+from ai_navigator import make_message
 
 # Conversation
 result = nav.chat(
@@ -154,45 +154,64 @@ Every `chat()` and `response()` call returns a `NavigatorResult` TypedDict:
 
 ```python
 {
-    "result":    str,         # content string; empty on error
-    "status":    CallStatus,  # status_code, status_desc, status_detail
-    "usage":     TokenUsage,  # prompt_tokens, completion_tokens, total_tokens
-    "reference": dict,        # model, finish_reason, provider metadata
+    "result":    str,           # content string; empty on error
+    "status":    StatusDetail,  # status_code, status_desc, status_detail
+    "usage":     TokenUsage,    # prompt_tokens, completion_tokens, total_tokens
+    "reference": dict,          # model, finish_reason, provider metadata
 }
 ```
+
+`StatusDetail` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status_code` | `StatusCode` | HTTP-style int code (`StatusCode.OK`, `StatusCode.TOO_MANY_REQUESTS`, …) |
+| `status_desc` | `str` | Short label — callers may supply their own; independent of `status_describe()` |
+| `status_detail` | `str` | Full error message; empty string on success |
 
 ---
 
 ## Status codes
 
-`StatusCode` is an extensible registry of HTTP-style integer codes:
+`StatusCode` is an `int` subclass — every registered code is a singleton instance that behaves like an `IntEnum` member but supports runtime extension:
 
 ```python
 from ai_navigator import StatusCode, status_describe
 
-StatusCode.OK                  # 200
-StatusCode.UNAUTHORIZED        # 401
-StatusCode.TOO_MANY_REQUESTS   # 429
-StatusCode.INTERNAL_ERROR      # 500
-StatusCode.CONTEXT_LIMIT       # 601  — prompt too long
-StatusCode.CONTENT_FILTERED    # 602  — blocked by safety policy
-StatusCode.OUTPUT_TRUNCATED    # 603  — finish_reason = "length"
-StatusCode.SCHEMA_MISMATCH     # 604  — structured output schema mismatch
-StatusCode.EMPTY_RESPONSE      # 605  — model returned empty string
-StatusCode.PROVIDER_TIMEOUT    # 606  — provider timeout
+StatusCode.OK                  # StatusCode(200)
+StatusCode.UNAUTHORIZED        # StatusCode(401)
+StatusCode.TOO_MANY_REQUESTS   # StatusCode(429)
+StatusCode.INTERNAL_ERROR      # StatusCode(500)
+StatusCode.CONTEXT_LIMIT       # StatusCode(601)  — prompt too long
+StatusCode.CONTENT_FILTERED    # StatusCode(602)  — blocked by safety policy
+StatusCode.OUTPUT_TRUNCATED    # StatusCode(603)  — finish_reason = "length"
+StatusCode.SCHEMA_MISMATCH     # StatusCode(604)  — structured output schema mismatch
+StatusCode.EMPTY_RESPONSE      # StatusCode(605)  — model returned empty string
+StatusCode.PROVIDER_TIMEOUT    # StatusCode(606)  — provider timeout
 
-status_describe(429)           # "Too Many Requests"
+# Values compare equal to plain ints
+StatusCode.OK == 200                         # True
+isinstance(StatusCode.OK, int)               # True
+isinstance(StatusCode.OK, StatusCode)        # True
 
-# Integer lookup (validates the code is registered)
-StatusCode[429]                # 429
-StatusCode[9999]               # KeyError — not registered
+# Each named constant is a singleton
+StatusCode[200] is StatusCode.OK             # True
 
-# Register custom codes
-StatusCode.register(709, "Custom Timeout")
-StatusCode[709]                # 709
+# Default description
+StatusCode.OK.desc                           # "Ok"
+status_describe(429)                         # "Too Many Requests"
+
+# Integer lookup — validates registration
+StatusCode[429]                              # StatusCode(429)
+StatusCode[9999]                             # KeyError — not registered
+
+# Register custom codes in-process
+MY_TIMEOUT = StatusCode.register(709, "Custom Timeout")
+MY_TIMEOUT == 709                            # True
+StatusCode[709] is MY_TIMEOUT               # True
 ```
 
-`status_desc` in `CallStatus` is **independent** of `status_describe()` — servers may provide a more specific label (e.g. `"Gemini quota exceeded"` instead of `"Too Many Requests"`).
+`status_desc` in `StatusDetail` is **independent** of `status_describe()` — servers may provide a more specific label (e.g. `"Gemini quota exceeded"` instead of `"Too Many Requests"`).
 
 ---
 
@@ -359,8 +378,8 @@ result = nav.chat(
 ## Image inputs
 
 ```python
+from ai_navigator import make_message
 from ai_navigator.pre_processor.image import ImageProcessor
-from ai_navigator.infra.types import make_message
 
 proc = ImageProcessor()
 
@@ -441,7 +460,7 @@ from ai_navigator.server import OpenAIServer, AnthropicServer, GeminiServer
 llm = OpenAIServer("gpt-4o", credentials={"api_key": "sk-..."})
 result = llm.chat([{"role": "user", "content": "Hello"}])
 print(result["result"])                   # content string
-print(result["status"]["status_code"])    # 200
+print(result["status"]["status_code"])    # StatusCode(200)
 
 for token in llm.stream([{"role": "user", "content": "Write a haiku."}]):
     print(token, end="", flush=True)
@@ -497,8 +516,7 @@ my_codes = "my_package.status:CODES"   # dict[int, str]
 6. Register via entry point or pass in `extra_servers`.
 
 ```python
-from ai_navigator import BaseServer, server_method, NavigatorResult
-from ai_navigator import StatusCode, status_describe
+from ai_navigator import BaseServer, server_method, NavigatorResult, StatusCode, status_describe
 
 class CohereServer(BaseServer):
     provider = "cohere"
@@ -514,18 +532,18 @@ class CohereServer(BaseServer):
         except Exception as exc:
             code = StatusCode.INTERNAL_ERROR
             self.logger.warning("Cohere error [%d]: %s", code, exc)
-            return NavigatorResult(
-                result="",
-                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
-                usage={},
-                reference={},
-            )
-        return NavigatorResult(
-            result=resp.text,
-            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
-            usage={},
-            reference={"model": self.model},
-        )
+            return {
+                "result": "",
+                "status": {"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
+                "usage": {},
+                "reference": {},
+            }
+        return {
+            "result": resp.text,
+            "status": {"status_code": StatusCode.OK, "status_desc": StatusCode.OK.desc, "status_detail": ""},
+            "usage": {},
+            "reference": {"model": self.model},
+        }
 ```
 
 ---
@@ -567,7 +585,7 @@ result = nav.chat(
     configs={"model_name": "my_claude"},
 )
 print(result["result"])    # 内容字符串
-print(result["status"])    # {"status_code": 200, "status_desc": "Ok", "status_detail": ""}
+print(result["status"])    # {"status_code": StatusCode(200), "status_desc": "Ok", "status_detail": ""}
 ```
 
 ---
@@ -639,7 +657,7 @@ result = nav.chat(
 print(result["result"])                        # "巴黎"
 print(result["usage"]["prompt_tokens"])        # 12
 print(result["reference"]["model"])            # "gpt-4o"
-print(result["status"]["status_code"])         # 200
+print(result["status"]["status_code"])         # StatusCode(200)
 ```
 
 ### 错误处理
@@ -654,7 +672,7 @@ result = nav.chat(request_data=..., configs={"model_name": "my_gpt4"})
 if result["status"]["status_code"] == StatusCode.OK:
     process(result["result"])
 else:
-    print(result["status"]["status_code"])    # 例如 429、401、500
+    print(result["status"]["status_code"])    # 例如 StatusCode(429)
     print(result["status"]["status_desc"])    # "Too Many Requests"
     print(result["status"]["status_detail"])  # 完整错误信息
 ```
@@ -668,7 +686,7 @@ else:
 | `"prompt"` | `list` | Prompt Engineering 预设任务，配合 `"data_dict"` 使用 |
 
 ```python
-from ai_navigator.infra.types import make_message
+from ai_navigator import make_message
 
 # 多轮对话
 result = nav.chat(
@@ -690,42 +708,61 @@ result = nav.chat(
 
 ```python
 {
-    "result":    str,         # 内容字符串；出错时为空字符串
-    "status":    CallStatus,  # status_code、status_desc、status_detail
-    "usage":     TokenUsage,  # prompt_tokens、completion_tokens、total_tokens
-    "reference": dict,        # model、finish_reason 等 provider 元数据
+    "result":    str,           # 内容字符串；出错时为空字符串
+    "status":    StatusDetail,  # status_code、status_desc、status_detail
+    "usage":     TokenUsage,    # prompt_tokens、completion_tokens、total_tokens
+    "reference": dict,          # model、finish_reason 等 provider 元数据
 }
 ```
+
+`StatusDetail` 字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `status_code` | `StatusCode` | HTTP 风格整数码（`StatusCode.OK`、`StatusCode.TOO_MANY_REQUESTS`…） |
+| `status_desc` | `str` | 简短标签；调用方可自定义，与 `status_describe()` 相互独立 |
+| `status_detail` | `str` | 完整错误信息；成功时为空字符串 |
 
 ---
 
 ## 状态码（StatusCode）
 
-`StatusCode` 是可扩展的 HTTP 风格整数码注册表：
+`StatusCode` 是 `int` 的子类，每个已注册的码是一个单例实例，行为和 `IntEnum` 成员完全一致，但支持运行时扩展：
 
 ```python
 from ai_navigator import StatusCode, status_describe
 
-StatusCode.OK                  # 200
-StatusCode.UNAUTHORIZED        # 401
-StatusCode.TOO_MANY_REQUESTS   # 429
-StatusCode.INTERNAL_ERROR      # 500
-StatusCode.CONTEXT_LIMIT       # 601  — prompt 超过上下文长度
-StatusCode.CONTENT_FILTERED    # 602  — 被内容安全策略拦截
-StatusCode.OUTPUT_TRUNCATED    # 603  — finish_reason = "length"
-StatusCode.SCHEMA_MISMATCH     # 604  — 结构化输出不符合 schema
-StatusCode.EMPTY_RESPONSE      # 605  — 模型返回空字符串
-StatusCode.PROVIDER_TIMEOUT    # 606  — provider 超时
+StatusCode.OK                  # StatusCode(200)
+StatusCode.UNAUTHORIZED        # StatusCode(401)
+StatusCode.TOO_MANY_REQUESTS   # StatusCode(429)
+StatusCode.INTERNAL_ERROR      # StatusCode(500)
+StatusCode.CONTEXT_LIMIT       # StatusCode(601)  — prompt 超过上下文长度
+StatusCode.CONTENT_FILTERED    # StatusCode(602)  — 被内容安全策略拦截
+StatusCode.OUTPUT_TRUNCATED    # StatusCode(603)  — finish_reason = "length"
+StatusCode.SCHEMA_MISMATCH     # StatusCode(604)  — 结构化输出不符合 schema
+StatusCode.EMPTY_RESPONSE      # StatusCode(605)  — 模型返回空字符串
+StatusCode.PROVIDER_TIMEOUT    # StatusCode(606)  — provider 超时
 
-status_describe(429)           # "Too Many Requests"
+# 与普通整数完全兼容
+StatusCode.OK == 200                         # True
+isinstance(StatusCode.OK, int)               # True
+isinstance(StatusCode.OK, StatusCode)        # True
+
+# 同一整数值返回同一对象
+StatusCode[200] is StatusCode.OK             # True
+
+# 默认描述
+StatusCode.OK.desc                           # "Ok"
+status_describe(429)                         # "Too Many Requests"
 
 # 整数查找（验证码已注册）
-StatusCode[429]                # 429
-StatusCode[9999]               # KeyError — 未注册
+StatusCode[429]                              # StatusCode(429)
+StatusCode[9999]                             # KeyError — 未注册
 
-# 注册自定义码
-StatusCode.register(709, "Custom Timeout")
-StatusCode[709]                # 709
+# 进程内注册自定义码
+MY_TIMEOUT = StatusCode.register(709, "Custom Timeout")
+MY_TIMEOUT == 709                            # True
+StatusCode[709] is MY_TIMEOUT               # True
 ```
 
 `status_desc` 字段与 `status_describe()` **相互独立** — server 可提供更具体的描述（如 `"Gemini 配额已用尽"` 而非 `"Too Many Requests"`）。
@@ -877,8 +914,8 @@ result = nav.chat(
 ## 图像输入
 
 ```python
+from ai_navigator import make_message
 from ai_navigator.pre_processor.image import ImageProcessor
-from ai_navigator.infra.types import make_message
 
 proc = ImageProcessor()
 
@@ -957,7 +994,7 @@ from ai_navigator.server import OpenAIServer, AnthropicServer, GeminiServer
 llm = OpenAIServer("gpt-4o", credentials={"api_key": "sk-..."})
 result = llm.chat([{"role": "user", "content": "你好"}])
 print(result["result"])                   # 内容字符串
-print(result["status"]["status_code"])    # 200
+print(result["status"]["status_code"])    # StatusCode(200)
 
 for token in llm.stream([{"role": "user", "content": "写一首俳句。"}]):
     print(token, end="", flush=True)

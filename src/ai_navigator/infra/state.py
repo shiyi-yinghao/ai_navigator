@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ai_navigator.infra.types import CallStatus
+from ai_navigator.state.status import StatusDetail
 
 
 @dataclass
@@ -47,8 +47,9 @@ class RequestState:
 
     status:
         ``None`` while the request is in-flight; set to the
-        :class:`~ai_navigator.infra.types.CallStatus` from the completed
-        :class:`~ai_navigator.infra.types.NavigatorResult` when done.
+        :class:`~ai_navigator.state.data_class.StatusDetail` from the
+        completed :class:`~ai_navigator.state.data_class.NavigatorResult`
+        when done.
     """
 
     request_data: dict[str, Any]
@@ -56,4 +57,4 @@ class RequestState:
     configs: dict[str, Any] = field(default_factory=dict)
     reference: dict[str, Any] = field(default_factory=dict)
     result: Any = None
-    status: CallStatus | None = None
+    status: StatusDetail | None = None

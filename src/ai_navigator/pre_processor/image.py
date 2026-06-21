@@ -6,8 +6,7 @@ from typing import Any
 
 import httpx
 
-from ai_navigator.infra.exceptions import PreProcessorError
-from ai_navigator.infra.types import ContentPart
+from ai_navigator.state.data_class import ContentPart
 
 SUPPORTED_MIME_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -25,10 +24,10 @@ class ImageProcessor:
         """Load and base64-encode a local image file."""
         p = Path(path)
         if not p.exists():
-            raise PreProcessorError(f"Image file not found: {path}")
+            raise ValueError(f"Image file not found: {path}")
         mime, _ = mimetypes.guess_type(str(p))
         if mime not in SUPPORTED_MIME_TYPES:
-            raise PreProcessorError(
+            raise ValueError(
                 f"Unsupported image type '{mime}'. "
                 f"Supported: {sorted(SUPPORTED_MIME_TYPES)}"
             )
@@ -45,7 +44,7 @@ class ImageProcessor:
             resp = httpx.get(url, follow_redirects=True, timeout=timeout)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise PreProcessorError(
+            raise ValueError(
                 f"Failed to download image from {url}: {exc}"
             ) from exc
         content_type = (
@@ -75,7 +74,7 @@ class ImageProcessor:
         try:
             from PIL import Image
         except ImportError as exc:
-            raise PreProcessorError(
+            raise ValueError(
                 "pillow is required for resize. "
                 "Install with: pip install ai-navigator[image]"
             ) from exc

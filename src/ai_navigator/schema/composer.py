@@ -107,7 +107,6 @@ from typing import Any
 
 import yaml
 
-from ai_navigator.infra.exceptions import SchemaError
 
 # ── JSON Schema type atoms ────────────────────────────────────────────────────
 
@@ -170,18 +169,18 @@ class SchemaComposer:
         try:
             spec = yaml.safe_load(yaml_str)
         except yaml.YAMLError as exc:
-            raise SchemaError(f"Invalid YAML: {exc}") from exc
+            raise ValueError(f"Invalid YAML: {exc}") from exc
         if not isinstance(spec, dict):
-            raise SchemaError("YAML root must be a mapping")
+            raise ValueError("YAML root must be a mapping")
         if "meta" not in spec or "schema" not in spec:
-            raise SchemaError("YAML must have top-level 'meta' and 'schema' keys")
+            raise ValueError("YAML must have top-level 'meta' and 'schema' keys")
         if not isinstance(spec["schema"], dict):
-            raise SchemaError(
+            raise ValueError(
                 "'schema' must be a dict (term-name → spec). "
                 "Use 'term_name:\\n  type: str' not '- name: term_name\\n  type: str'."
             )
         if "defs" in spec and not isinstance(spec["defs"], dict):
-            raise SchemaError("'defs' must be a dict (def-name → spec)")
+            raise ValueError("'defs' must be a dict (def-name → spec)")
         return cls(spec)
 
     @classmethod
@@ -283,7 +282,7 @@ class SchemaComposer:
 
 def _validate_term_name(name: str) -> None:
     if "." in name:
-        raise SchemaError(
+        raise ValueError(
             f"Term name '{name}' contains a dot. "
             "Dots are reserved for nested-path output notation."
         )
@@ -332,7 +331,7 @@ def _type_to_json_schema(type_val: Any, term_name: str) -> dict[str, Any]:
             elif isinstance(t, str) and t in _SCALAR_JSON_TYPE:
                 any_of.append({"type": _SCALAR_JSON_TYPE[t]})
             else:
-                raise SchemaError(
+                raise ValueError(
                     f"Type '{t}' in list type for term '{term_name}' is not supported "
                     "inside anyOf — only scalar types and 'null' are allowed."
                 )
@@ -345,7 +344,7 @@ def _type_to_json_schema(type_val: Any, term_name: str) -> dict[str, Any]:
     if type_val in _SCALAR_JSON_TYPE:
         return {"type": _SCALAR_JSON_TYPE[type_val]}
 
-    raise SchemaError(f"Unexpected type value '{type_val}' for term '{term_name}'")
+    raise ValueError(f"Unexpected type value '{type_val}' for term '{term_name}'")
 
 
 def _term_to_json_schema(name: str, term: dict[str, Any]) -> dict[str, Any]:
@@ -372,7 +371,7 @@ def _term_to_json_schema(name: str, term: dict[str, Any]) -> dict[str, Any]:
     elif type_val == "enum":
         choices: list[str] = term.get("choices", [])
         if not choices:
-            raise SchemaError(
+            raise ValueError(
                 f"Term '{name}' has type 'enum' but no 'choices' defined. "
                 "Add 'choices:' or 'dynamic_choices:' and call preprocess() first."
             )
@@ -411,7 +410,7 @@ def _term_to_json_schema(name: str, term: dict[str, Any]) -> dict[str, Any]:
         schema = {}
 
     else:
-        raise SchemaError(f"Unknown type '{type_val}' for term '{name}'")
+        raise ValueError(f"Unknown type '{type_val}' for term '{name}'")
 
     if description:
         schema["description"] = description
