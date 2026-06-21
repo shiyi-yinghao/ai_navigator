@@ -4,13 +4,12 @@ from ai_navigator.navigator import Navigator
 from ai_navigator.server.base_server import BaseServer
 from ai_navigator.infra.exceptions import (
     AINavigatorError,
-    AuthenticationError,
     ParseError,
-    ProviderError,
-    RateLimitError,
     SchemaError,
 )
 from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage, NavigatorResult, CallStatus
+from ai_navigator.infra.status_codes import SC, describe as status_describe
+from ai_navigator.server.base_server import server_method
 from ai_navigator.service.base_navigator import BaseNavigator, get_navigator_class
 from ai_navigator.infra.state import RequestState, Status, StatusCode
 from ai_navigator.param.const_configs import ConstConfigs
@@ -40,6 +39,11 @@ __all__ = [
     "ContentPart",
     "NavigatorResult",
     "CallStatus",
+    # Status codes
+    "SC",
+    "status_describe",
+    # Server extension
+    "server_method",
     # Pipeline state
     "RequestState",
     "Status",
@@ -55,10 +59,7 @@ __all__ = [
     "get_logger",
     # Exceptions
     "AINavigatorError",
-    "AuthenticationError",
     "ParseError",
-    "ProviderError",
-    "RateLimitError",
     "SchemaError",
     # Schema
     "SchemaComposer",

@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
-from ai_navigator.infra.exceptions import AuthenticationError, ProviderError, RateLimitError
-from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage
-from ai_navigator.server.base_server import BaseServer
+from ai_navigator.infra.types import ContentPart, Message, NavigatorResult, TokenUsage
+from ai_navigator.infra.status_codes import SC, describe as status_describe
+from ai_navigator.server.base_server import BaseServer, server_method
 
 
 class OpenAIServer(BaseServer):
@@ -13,10 +13,16 @@ class OpenAIServer(BaseServer):
     ---------------------
     - ``api_key``   (required) — OpenAI API key.
     - ``base_url``  (optional) — Override for Azure OpenAI or compatible proxies.
+
+    Status codes returned
+    ----------------------
+    200  Ok
+    401  Unauthorized  (invalid or missing API key)
+    429  Too Many Requests  (provider rate-limit; retried automatically)
+    500  Internal Server Error  (unexpected SDK / network error)
     """
 
     provider: ClassVar[str] = "openai"
-    _supported_methods: ClassVar[list[str]] = ["chat", "response"]
 
     def _setup(self, **kwargs: Any) -> None:
         try:
@@ -30,23 +36,25 @@ class OpenAIServer(BaseServer):
             base_url=self.credentials.get("base_url"),
         )
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Server methods ────────────────────────────────────────────────────────
 
+    @server_method
     def chat(
         self,
         messages: list[Message] | str,
         system: str | None = None,
         **kwargs: Any,
-    ) -> Response:
+    ) -> NavigatorResult:
         """Standard chat completion."""
-        return self._invoke("chat", self._normalise(messages, system), **kwargs)
+        return self._call_api(self._normalise(messages, system), **kwargs)
 
+    @server_method
     def response(
         self,
         messages: list[Message] | str,
         system: str | None = None,
         **kwargs: Any,
-    ) -> Response:
+    ) -> NavigatorResult:
         """Structured-output completion.
 
         Pass ``response_format`` in kwargs to control the output schema, e.g.::
@@ -55,7 +63,10 @@ class OpenAIServer(BaseServer):
             server.response(msgs, response_format={"type": "json_schema",
                                                     "json_schema": schema_dict})
         """
-        return self._invoke("response", self._normalise(messages, system), **kwargs)
+        kwargs.setdefault("response_format", {"type": "json_object"})
+        return self._call_api(self._normalise(messages, system), **kwargs)
+
+    # ── Streaming ─────────────────────────────────────────────────────────────
 
     def stream(
         self,
@@ -64,39 +75,7 @@ class OpenAIServer(BaseServer):
         **kwargs: Any,
     ) -> Iterator[str]:
         """Token-by-token streaming."""
-        yield from self._stream(self._normalise(messages, system), **kwargs)
-
-    # ── Private implementations ───────────────────────────────────────────────
-
-    def _chat(self, messages: list[Message], **kwargs: Any) -> Response:
-        oai_msgs = [_to_openai_message(m) for m in messages]
-        try:
-            resp = self._client.chat.completions.create(
-                model=self.model,
-                messages=oai_msgs,  # type: ignore[arg-type]
-                **kwargs,
-            )
-        except Exception as exc:
-            _raise_openai_error(exc)
-        choice = resp.choices[0]
-        return {
-            "content": choice.message.content or "",
-            "model": resp.model,
-            "usage": _parse_usage(resp.usage),
-            "finish_reason": choice.finish_reason,
-            "raw": resp,
-        }
-
-    def _response(self, messages: list[Message], **kwargs: Any) -> Response:
-        """Structured output via ``response_format``.
-
-        Defaults to ``json_object`` unless the caller overrides via kwargs.
-        """
-        kwargs.setdefault("response_format", {"type": "json_object"})
-        return self._chat(messages, **kwargs)
-
-    def _stream(self, messages: list[Message], **kwargs: Any) -> Iterator[str]:
-        oai_msgs = [_to_openai_message(m) for m in messages]
+        oai_msgs = [_to_openai_message(m) for m in self._normalise(messages, system)]
         stream = self._client.chat.completions.create(
             model=self.model,
             messages=oai_msgs,  # type: ignore[arg-type]
@@ -108,8 +87,48 @@ class OpenAIServer(BaseServer):
             if delta:
                 yield delta
 
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _call_api(self, messages: list[Message], **kwargs: Any) -> NavigatorResult:
+        """Raw OpenAI API call — shared by chat() and response()."""
+        oai_msgs = [_to_openai_message(m) for m in messages]
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=oai_msgs,  # type: ignore[arg-type]
+                **kwargs,
+            )
+        except Exception as exc:
+            code = _classify(exc)
+            self.logger.warning("OpenAI API error [%d %s]: %s", code, status_describe(code), exc)
+            return NavigatorResult(
+                result="",
+                status={"status_code": code, "status_desc": status_describe(code), "status_detail": str(exc)},
+                usage={},
+                reference={},
+            )
+        choice = resp.choices[0]
+        return NavigatorResult(
+            result=choice.message.content or "",
+            status={"status_code": SC.OK, "status_desc": status_describe(SC.OK), "status_detail": ""},
+            usage=_parse_usage(resp.usage),
+            reference={"model": resp.model, "finish_reason": choice.finish_reason},
+        )
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _classify(exc: Exception) -> int:
+    try:
+        from openai import AuthenticationError, RateLimitError
+        if isinstance(exc, AuthenticationError):
+            return SC.UNAUTHORIZED
+        if isinstance(exc, RateLimitError):
+            return SC.TOO_MANY_REQUESTS
+    except ImportError:
+        pass
+    return SC.INTERNAL_ERROR
+
 
 def _to_openai_message(msg: Message) -> dict[str, Any]:
     content = msg["content"]
@@ -127,24 +146,11 @@ def _part_to_openai(part: ContentPart) -> dict[str, Any]:
     return {"type": "image_url", "image_url": {"url": f"data:{mt};base64,{part.get('image_data', '')}"}}
 
 
-def _parse_usage(usage: Any) -> TokenUsage | None:
+def _parse_usage(usage: Any) -> TokenUsage:
     if usage is None:
-        return None
+        return {}
     return {
-        "prompt_tokens": usage.prompt_tokens,
+        "prompt_tokens":     usage.prompt_tokens,
         "completion_tokens": usage.completion_tokens,
-        "total_tokens": usage.total_tokens,
+        "total_tokens":      usage.total_tokens,
     }
-
-
-def _raise_openai_error(exc: Exception) -> None:
-    try:
-        from openai import AuthenticationError as OAIAuth
-        from openai import RateLimitError as OAIRate
-    except ImportError:
-        raise ProviderError(str(exc), "openai") from exc
-    if isinstance(exc, OAIAuth):
-        raise AuthenticationError(str(exc), "openai") from exc
-    if isinstance(exc, OAIRate):
-        raise RateLimitError(str(exc), "openai") from exc
-    raise ProviderError(str(exc), "openai") from exc

@@ -61,7 +61,8 @@ from importlib.metadata import entry_points
 from threading import Lock
 from typing import Any, Callable, Protocol, TypedDict
 
-from ai_navigator.infra.types import NavigatorResult, TokenUsage
+from ai_navigator.infra.types import NavigatorResult
+from ai_navigator.infra.status_codes import SC
 
 _log = logging.getLogger("ai_navigator.monitor.traffic")
 
@@ -287,31 +288,32 @@ def traffic_monitor(fn: Callable) -> Callable:
         try:
             allowed = get_rate_limiter()(configs, stats)
         except Exception as exc:
-            return _err_result(str(exc), type(exc).__name__)
+            return _make_err(SC.INTERNAL_ERROR, str(exc))
 
         if not allowed:
-            return _err_result("request blocked by rate limiter", "RateLimited")
+            return _make_err(SC.TOO_MANY_REQUESTS, "request blocked by rate limiter")
 
         # Record enter — counters increment after limiter allows
         estimated, mk, dk = monitor.on_request_enter(account_name, user)
 
         try:
             nav_result: NavigatorResult = fn(self, request_data, params=params, configs=configs)
-            usage = nav_result.get("usage", {}) if isinstance(nav_result, dict) else {}
-            monitor.on_request_complete(account_name, user, estimated, usage, mk, dk)
+            monitor.on_request_complete(account_name, user, estimated, nav_result.get("usage", {}), mk, dk)
             return nav_result
         except Exception as exc:
             monitor.on_request_complete(account_name, user, estimated, {}, mk, dk)
-            return _err_result(str(exc), type(exc).__name__)
+            return _make_err(SC.INTERNAL_ERROR, str(exc))
 
     return wrapper
 
 
-def _err_result(msg: str, error_type: str) -> NavigatorResult:
+def _make_err(code: int, detail: str) -> NavigatorResult:
+    from ai_navigator.infra.status_codes import describe as status_describe
     return NavigatorResult(
-        result=None,
-        usage=TokenUsage(),
-        status={"ok": False, "error": msg, "error_type": error_type},
+        result="",
+        status={"status_code": code, "status_desc": status_describe(code), "status_detail": detail},
+        usage={},
+        reference={},
     )
 
 

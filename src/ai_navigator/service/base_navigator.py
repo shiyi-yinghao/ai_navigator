@@ -83,9 +83,9 @@ class BaseNavigator:
         Returns
         -------
         NavigatorResult
-            ``result``  — server :class:`~ai_navigator.infra.types.Response`
-            ``usage``   — token usage
-            ``status``  — ``{"ok": True, ...}`` on success
+            ``result`` — content string
+            ``status`` — ``{"ok": True, ...}``
+            ``reference`` — usage, model, finish_reason
         """
         params = params or {}
         configs = configs or {}
@@ -95,20 +95,14 @@ class BaseNavigator:
         if not model_name:
             raise ValueError("configs must contain 'model_name'.")
 
-        server  = self._get_server(model_name)
+        server   = self._get_server(model_name)
         messages = self._preprocess(request_data)
         self._log_stage("request_preprocess", messages)
 
         effective_retry = self._effective_retry(model_name, configs)
-        server_result = server.chat(messages, _retry_max=effective_retry, **params)
-        self._log_stage("request_executed", server_result)
-
-        usage = server_result.get("usage", {}) if isinstance(server_result, dict) else {}
-        return NavigatorResult(
-            result=server_result,
-            usage=usage,
-            status={"ok": True, "error": None, "error_type": None},
-        )
+        result = server.chat(messages, _retry_max=effective_retry, **params)
+        self._log_stage("request_executed", result)
+        return result
 
     @traffic_monitor
     def response(
@@ -131,9 +125,9 @@ class BaseNavigator:
         Returns
         -------
         NavigatorResult
-            ``result``  — server :class:`~ai_navigator.infra.types.Response`
-            ``usage``   — token usage
-            ``status``  — ``{"ok": True, ...}`` on success
+            ``result`` — content string
+            ``status`` — ``{"ok": True, ...}``
+            ``reference`` — usage, model, finish_reason
         """
         params = params or {}
         configs = configs or {}
@@ -148,15 +142,9 @@ class BaseNavigator:
         self._log_stage("request_preprocess", messages)
 
         effective_retry = self._effective_retry(model_name, configs)
-        server_result = server.response(messages, _retry_max=effective_retry, **params)
-        self._log_stage("request_executed", server_result)
-
-        usage = server_result.get("usage", {}) if isinstance(server_result, dict) else {}
-        return NavigatorResult(
-            result=server_result,
-            usage=usage,
-            status={"ok": True, "error": None, "error_type": None},
-        )
+        result = server.response(messages, _retry_max=effective_retry, **params)
+        self._log_stage("request_executed", result)
+        return result
 
     # ── Server resolution ─────────────────────────────────────────────────────
 

@@ -1,10 +1,7 @@
 from ai_navigator.infra.exceptions import (
     AINavigatorError,
-    AuthenticationError,
     ParseError,
     PreProcessorError,
-    ProviderError,
-    RateLimitError,
     SchemaError,
     StorageError,
 )
@@ -17,6 +14,10 @@ from ai_navigator.infra.types import (
     make_message,
 )
 from ai_navigator.infra.state import RequestState, Status, StatusCode
+from ai_navigator.infra.status_codes import SC, describe as status_describe
+
+# STATUS_DESCRIPTIONS is the live registry — kept for backwards compat
+STATUS_DESCRIPTIONS = SC._registry
 
 __all__ = [
     # Types
@@ -30,13 +31,14 @@ __all__ = [
     "RequestState",
     "Status",
     "StatusCode",
+    # Status codes
+    "SC",
+    "STATUS_DESCRIPTIONS",
+    "status_describe",
     # Exceptions
     "AINavigatorError",
-    "AuthenticationError",
     "ParseError",
     "PreProcessorError",
-    "ProviderError",
-    "RateLimitError",
     "SchemaError",
     "StorageError",
 ]

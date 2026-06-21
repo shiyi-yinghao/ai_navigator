@@ -35,15 +35,27 @@ class Response(TypedDict, total=False):
 
 
 class CallStatus(TypedDict):
-    ok: bool
-    error: str | None
-    error_type: str | None
+    """Status block returned with every :class:`NavigatorResult`.
+
+    ``status_code`` — HTTP-style integer code:
+        ``200`` — success
+        ``429`` — rate-limit hit (provider or local rate-limiter hook)
+        ``401`` — authentication / API-key failure
+        ``502`` — other provider-side error (Bad Gateway)
+        ``500`` — unexpected / unclassified error
+    ``status_desc``   — short human-readable label (e.g. "Ok", "Too Many Requests")
+    ``status_detail`` — full error message; empty string on success
+    """
+    status_code: int
+    status_desc: str
+    status_detail: str
 
 
 class NavigatorResult(TypedDict):
-    result: Any        # server Response TypedDict, or None on error
-    usage: TokenUsage  # token usage, or {} on error
+    result: str        # content string; empty on error; processing status for batch
     status: CallStatus
+    usage: TokenUsage  # token counts; empty on error
+    reference: dict    # model, finish_reason, and any provider-specific metadata
 
 
 def make_content_part(type_: str, **kwargs: Any) -> ContentPart:
