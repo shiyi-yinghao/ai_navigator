@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.types import Message, NavigatorResult, TokenUsage
-from ai_navigator.infra.status_codes import SC, describe as status_describe
+from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
 from ai_navigator.server.base_server import BaseServer, server_method
 
 
@@ -64,7 +64,7 @@ class GeminiServer(BaseServer):
             )
         return NavigatorResult(
             result=resp.text,
-            status={"status_code": SC.OK, "status_desc": status_describe(SC.OK), "status_detail": ""},
+            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
             usage=_parse_usage(resp),
             reference={"model": self.model},
         )
@@ -101,7 +101,7 @@ class GeminiServer(BaseServer):
             )
         return NavigatorResult(
             result=resp.text,
-            status={"status_code": SC.OK, "status_desc": status_describe(SC.OK), "status_detail": ""},
+            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
             usage=_parse_usage(resp),
             reference={"model": self.model},
         )
@@ -142,10 +142,10 @@ class GeminiServer(BaseServer):
 def _classify(exc: Exception) -> int:
     msg = str(exc).lower()
     if any(k in msg for k in ("api_key", "permission", "unauthorized", "unauthenticated")):
-        return SC.UNAUTHORIZED
+        return StatusCode.UNAUTHORIZED
     if any(k in msg for k in ("quota", "resource_exhausted", "rate_limit")):
-        return SC.TOO_MANY_REQUESTS
-    return SC.INTERNAL_ERROR
+        return StatusCode.TOO_MANY_REQUESTS
+    return StatusCode.INTERNAL_ERROR
 
 
 def _to_gemini_messages(

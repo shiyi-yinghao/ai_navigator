@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.types import ContentPart, Message, NavigatorResult
-from ai_navigator.infra.status_codes import SC, describe as status_describe
+from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
 from ai_navigator.server.base_server import BaseServer, server_method
 
 
@@ -108,7 +108,7 @@ class AnthropicServer(BaseServer):
         )
         return NavigatorResult(
             result=content,
-            status={"status_code": SC.OK, "status_desc": status_describe(SC.OK), "status_detail": ""},
+            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
             usage={
                 "prompt_tokens":      resp.usage.input_tokens,
                 "completion_tokens":  resp.usage.output_tokens,
@@ -142,12 +142,12 @@ def _classify(exc: Exception) -> int:
     try:
         from anthropic import AuthenticationError, RateLimitError
         if isinstance(exc, AuthenticationError):
-            return SC.UNAUTHORIZED
+            return StatusCode.UNAUTHORIZED
         if isinstance(exc, RateLimitError):
-            return SC.TOO_MANY_REQUESTS
+            return StatusCode.TOO_MANY_REQUESTS
     except ImportError:
         pass
-    return SC.INTERNAL_ERROR
+    return StatusCode.INTERNAL_ERROR
 
 
 def _split_system(messages: list[Message]) -> tuple[str | None, list[Message]]:

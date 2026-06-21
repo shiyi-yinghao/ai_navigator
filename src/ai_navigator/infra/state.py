@@ -1,19 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
-
-class StatusCode(Enum):
-    PENDING = "pending"
-    OK = "ok"
-    ERROR = "error"
-
-
-@dataclass
-class Status:
-    code: StatusCode = StatusCode.PENDING
-    message: str = ""
+from ai_navigator.infra.types import CallStatus
 
 
 @dataclass
@@ -43,30 +32,23 @@ class RequestState:
 
     params:
         LLM / server parameters passed directly through to the provider call.
-        Examples: ``temperature``, ``max_tokens``, ``top_p``, ``logprobs``,
-        ``top_logprobs``, ``stop``.
+        Examples: ``temperature``, ``max_tokens``, ``top_p``.
 
     configs:
         Package-internal control knobs consumed by ai-navigator stages
-        (not forwarded to the provider).  Examples:
-
-        ``term_extract_discard`` (bool, default ``True``)
-            When ``True``, a term that is expanded (dict recursed, list
-            flattened) is removed from the result under its own key.
-
-        ``extract_list_elements`` (bool, default ``False``)
-            Expand list terms into numbered keys (``term_1``, ``term_2``, …).
+        (not forwarded to the provider).
 
     reference:
         Derived artefacts shared across pipeline stages, e.g.
-        ``{"schema": <SchemaComposer>}``.  The processed schema lives here
-        so downstream stages can access it without extra function arguments.
+        ``{"schema": <SchemaComposer>}``.
 
     result:
         Populated by the final processing stage with the parsed LLM output.
 
     status:
-        Current processing status.
+        ``None`` while the request is in-flight; set to the
+        :class:`~ai_navigator.infra.types.CallStatus` from the completed
+        :class:`~ai_navigator.infra.types.NavigatorResult` when done.
     """
 
     request_data: dict[str, Any]
@@ -74,4 +56,4 @@ class RequestState:
     configs: dict[str, Any] = field(default_factory=dict)
     reference: dict[str, Any] = field(default_factory=dict)
     result: Any = None
-    status: Status = field(default_factory=Status)
+    status: CallStatus | None = None

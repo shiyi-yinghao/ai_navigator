@@ -62,7 +62,7 @@ from threading import Lock
 from typing import Any, Callable, Protocol, TypedDict
 
 from ai_navigator.infra.types import NavigatorResult
-from ai_navigator.infra.status_codes import SC
+from ai_navigator.monitor.status_codes import StatusCode
 
 _log = logging.getLogger("ai_navigator.monitor.traffic")
 
@@ -288,10 +288,10 @@ def traffic_monitor(fn: Callable) -> Callable:
         try:
             allowed = get_rate_limiter()(configs, stats)
         except Exception as exc:
-            return _make_err(SC.INTERNAL_ERROR, str(exc))
+            return _make_err(StatusCode.INTERNAL_ERROR, str(exc))
 
         if not allowed:
-            return _make_err(SC.TOO_MANY_REQUESTS, "request blocked by rate limiter")
+            return _make_err(StatusCode.TOO_MANY_REQUESTS, "request blocked by rate limiter")
 
         # Record enter — counters increment after limiter allows
         estimated, mk, dk = monitor.on_request_enter(account_name, user)
@@ -302,13 +302,13 @@ def traffic_monitor(fn: Callable) -> Callable:
             return nav_result
         except Exception as exc:
             monitor.on_request_complete(account_name, user, estimated, {}, mk, dk)
-            return _make_err(SC.INTERNAL_ERROR, str(exc))
+            return _make_err(StatusCode.INTERNAL_ERROR, str(exc))
 
     return wrapper
 
 
 def _make_err(code: int, detail: str) -> NavigatorResult:
-    from ai_navigator.infra.status_codes import describe as status_describe
+    from ai_navigator.monitor.status_codes import describe as status_describe
     return NavigatorResult(
         result="",
         status={"status_code": code, "status_desc": status_describe(code), "status_detail": detail},

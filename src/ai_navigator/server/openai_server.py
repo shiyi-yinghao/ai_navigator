@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, ClassVar, Iterator
 
 from ai_navigator.infra.types import ContentPart, Message, NavigatorResult, TokenUsage
-from ai_navigator.infra.status_codes import SC, describe as status_describe
+from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
 from ai_navigator.server.base_server import BaseServer, server_method
 
 
@@ -110,7 +110,7 @@ class OpenAIServer(BaseServer):
         choice = resp.choices[0]
         return NavigatorResult(
             result=choice.message.content or "",
-            status={"status_code": SC.OK, "status_desc": status_describe(SC.OK), "status_detail": ""},
+            status={"status_code": StatusCode.OK, "status_desc": status_describe(StatusCode.OK), "status_detail": ""},
             usage=_parse_usage(resp.usage),
             reference={"model": resp.model, "finish_reason": choice.finish_reason},
         )
@@ -122,12 +122,12 @@ def _classify(exc: Exception) -> int:
     try:
         from openai import AuthenticationError, RateLimitError
         if isinstance(exc, AuthenticationError):
-            return SC.UNAUTHORIZED
+            return StatusCode.UNAUTHORIZED
         if isinstance(exc, RateLimitError):
-            return SC.TOO_MANY_REQUESTS
+            return StatusCode.TOO_MANY_REQUESTS
     except ImportError:
         pass
-    return SC.INTERNAL_ERROR
+    return StatusCode.INTERNAL_ERROR
 
 
 def _to_openai_message(msg: Message) -> dict[str, Any]:

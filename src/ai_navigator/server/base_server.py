@@ -30,6 +30,7 @@ from typing import Any, ClassVar, Literal
 
 from ai_navigator.infra.types import Message, NavigatorResult
 from ai_navigator.monitor.logger import get_logger
+from ai_navigator.monitor.status_codes import StatusCode
 
 
 # ── Public decorator ──────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ def _wrap_infrastructure(fn):
         result: NavigatorResult | None = None
         for attempt in range(effective + 1):
             result = fn(self, *args, **kwargs)
-            if result["status"]["status_code"] != 429:
+            if result["status"]["status_code"] != StatusCode.TOO_MANY_REQUESTS:
                 break
             if attempt < effective:
                 self.logger.warning(
@@ -76,7 +77,7 @@ def _wrap_infrastructure(fn):
                 time.sleep(wait)
                 wait *= self._retry_backoff
 
-        if result["status"]["status_code"] == 200:
+        if result["status"]["status_code"] == StatusCode.OK:
             self.logger.debug("%s ok | model=%s", fn.__name__, self.model)
         return result
 
