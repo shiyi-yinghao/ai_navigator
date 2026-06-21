@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from importlib.metadata import entry_points
 from typing import Any, Iterable, Protocol, runtime_checkable
 
-from ai_navigator.infra.const_configs import ConstConfigs
+from ai_navigator.param.const_configs import ConstConfigs
 from ai_navigator.monitor.logger import get_logger
 
 _log = get_logger("batch_inference.storage")

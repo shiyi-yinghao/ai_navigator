@@ -9,7 +9,7 @@ from ai_navigator.infra.exceptions import (
     ParseError,
     SchemaError,
 )
-from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage, NavigatorResult, CallStatus
+from ai_navigator.infra.types import ContentPart, Message, Response, TokenUsage, NavigatorResult, CallStatus, make_message, make_content_part
 from ai_navigator.monitor.status_codes import StatusCode, describe as status_describe
 from ai_navigator.server.base_server import server_method
 from ai_navigator.service.base_navigator import BaseNavigator, get_navigator_class
@@ -32,7 +32,7 @@ from ai_navigator.batch_inference.storage import BatchStorageProtocol, get_batch
 # has not configured any handlers by the time the first Navigator/Server is created.
 logging.getLogger("ai_navigator").addHandler(logging.NullHandler())
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 __all__ = [
     # Core
@@ -46,6 +46,8 @@ __all__ = [
     "ContentPart",
     "NavigatorResult",
     "CallStatus",
+    "make_message",
+    "make_content_part",
     # Status codes
     "StatusCode",
     "status_describe",

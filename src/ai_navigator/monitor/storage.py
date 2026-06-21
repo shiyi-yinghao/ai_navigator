@@ -35,7 +35,7 @@ import json
 import sqlite3
 from typing import Any, Literal
 
-from ai_navigator.infra.const_configs import ConstConfigs
+from ai_navigator.param.const_configs import ConstConfigs
 from ai_navigator.monitor.logger import get_logger
 
 _log = get_logger("storage")

@@ -1,42 +1,35 @@
 """Unit tests that run without any provider API keys installed."""
+import os
+import tempfile
+
 import pytest
 from pydantic import BaseModel
 
 from ai_navigator.infra.exceptions import ParseError, SchemaError
-from ai_navigator.infra.models import Message, Response, TokenUsage
-import os
-import tempfile
-
-from ai_navigator.infra.storage import StorageBase, StoreStatus
+from ai_navigator.infra.types import Message, TokenUsage, make_message
+from ai_navigator.monitor.storage import StorageBase, StoreStatus
 from ai_navigator.parser.response import ResponseParser
 from ai_navigator.schema.composer import SchemaComposer
 from ai_navigator.schema.extractor import ResultExtractor
 
 
-# ── Message / Response ────────────────────────────────────────────────────────
+# ── Message helpers ───────────────────────────────────────────────────────────
 
-def test_message_factories():
-    assert Message.user("hi").role == "user"
-    assert Message.system("be helpful").role == "system"
-    assert Message.assistant("hello").role == "assistant"
+def test_make_message_roles():
+    assert make_message("user", "hi")["role"] == "user"
+    assert make_message("system", "be helpful")["role"] == "system"
+    assert make_message("assistant", "hello")["content"] == "hello"
 
 
-def test_response_to_dict_excludes_raw():
-    r = Response(
-        content="hello",
-        model="gpt-4o",
-        usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-        raw=object(),
-    )
-    d = r.to_dict()
-    assert d["content"] == "hello"
-    assert "raw" not in d
+def test_make_message_list_content():
+    parts = [{"type": "text", "text": "hello"}]
+    msg = make_message("user", parts)
+    assert msg["content"] == parts
 
 
 # ── StorageBase (SQLite + file default impl) ──────────────────────────────────
 
 def _tmp_storage() -> StorageBase:
-    """Return a StorageBase using an isolated temp SQLite file."""
     db = os.path.join(tempfile.mkdtemp(), "test.db")
     class _TmpStorage(StorageBase):
         def _get_db_path(self): return db
@@ -87,8 +80,6 @@ def test_storage_cache_store_and_fetch():
 
 
 def test_storage_override_single_pair():
-    """A subclass that overrides only result pair; others use the SQLite default."""
-
     db = os.path.join(tempfile.mkdtemp(), "h.db")
 
     class _HybridStorage(StorageBase):
@@ -104,12 +95,8 @@ def test_storage_override_single_pair():
             return getattr(self, "_results", {}).get(key)
 
     s = _HybridStorage()
-
-    # overridden pair uses in-memory dict
     assert s.result_store("r1", "hello") == StoreStatus.OK
     assert s.result_fetch("r1") == "hello"
-
-    # default pair still uses SQLite
     assert s.request_store("q1", {"prompt": "hi"}) == StoreStatus.OK
     assert s.request_fetch("q1") == {"prompt": "hi"}
 
@@ -154,6 +141,39 @@ def test_parse_pydantic():
     obj = p.parse_pydantic('{"name": "widget", "count": 3}', Item)
     assert obj.name == "widget"
     assert obj.count == 3
+
+
+# ── StatusCode ────────────────────────────────────────────────────────────────
+
+def test_status_code_named_attrs():
+    from ai_navigator.monitor.status_codes import StatusCode
+    assert StatusCode.OK == 200
+    assert StatusCode.TOO_MANY_REQUESTS == 429
+    assert StatusCode.CONTEXT_LIMIT == 601
+
+
+def test_status_code_index_lookup():
+    from ai_navigator.monitor.status_codes import StatusCode
+    assert StatusCode[200] == 200
+    assert StatusCode[429] == 429
+
+
+def test_status_code_index_unknown_raises():
+    from ai_navigator.monitor.status_codes import StatusCode
+    with pytest.raises(KeyError):
+        StatusCode[9999]
+
+
+def test_status_code_register():
+    from ai_navigator.monitor.status_codes import StatusCode, describe
+    StatusCode.register(799, "Test Code")
+    assert StatusCode[799] == 799
+    assert describe(799) == "Test Code"
+
+
+def test_describe_unknown():
+    from ai_navigator.monitor.status_codes import describe
+    assert describe(9998) == "Unknown"
 
 
 # ── SchemaComposer ────────────────────────────────────────────────────────────
@@ -283,9 +303,7 @@ schema:
     sc = SchemaComposer.from_yaml(yaml_str)
     fmt = sc.schema_conversion()
     inner = fmt["json_schema"]["schema"]
-    # $defs present
     assert inner["$defs"] == {"score_def": {"type": "integer", "description": "Score 0-10"}}
-    # ref term
     assert inner["properties"]["rating"] == {"$ref": "#/$defs/score_def"}
 
 
@@ -321,7 +339,7 @@ schema:
     term = resolved._terms["category"]
     assert term["choices"] == ["electronics", "clothing"]
     assert "dynamic_choices" not in term
-    assert term["type"] == "enum"  # type unchanged
+    assert term["type"] == "enum"
 
 
 def test_preprocess_resolves_dynamic_type():
@@ -427,7 +445,6 @@ def test_result_extractor_dict_expanded_by_default():
     data = {"title": "Phone", "detail": {"reason": "fast", "score": 9},
             "tags": ["a", "b"], "soldiers": ["Alice", "Bob"]}
     result = ResultExtractor().extract(data, sc)
-    # dict is expanded; list is kept whole
     assert result == {
         "title": "Phone",
         "detail.reason": "fast",
@@ -444,14 +461,12 @@ def test_result_extractor_list_elements_flattened():
     result = ResultExtractor().extract(
         data, sc, configs={"extract_list_elements": True}
     )
-    # list expanded, originals discarded (default discard=True)
     assert result["tags_1"] == "speed"
     assert result["tags_2"] == "price"
     assert result["soldiers_1"] == "Alice"
     assert result["soldiers_3"] == "Carol"
     assert "tags" not in result
     assert "soldiers" not in result
-    # dict still expanded and discarded
     assert result["detail.reason"] == "fast"
     assert "detail" not in result
 
@@ -463,7 +478,6 @@ def test_result_extractor_discard_false_keeps_parent():
     result = ResultExtractor().extract(
         data, sc, configs={"term_extract_discard": False}
     )
-    # dict: parent key kept AND children expanded
     assert result["detail"] == {"reason": "fast", "score": 9}
     assert result["detail.reason"] == "fast"
     assert result["detail.score"] == 9
@@ -476,7 +490,6 @@ def test_result_extractor_discard_false_with_list():
     result = ResultExtractor().extract(
         data, sc, configs={"extract_list_elements": True, "term_extract_discard": False}
     )
-    # list: original kept AND elements expanded
     assert result["tags"] == ["a", "b"]
     assert result["tags_1"] == "a"
     assert result["tags_2"] == "b"
@@ -489,6 +502,5 @@ def test_result_extractor_empty_list():
     result = ResultExtractor().extract(
         data, sc, configs={"extract_list_elements": True}
     )
-    # empty list: no numbered keys; with discard=True also no original
     assert "tags_1" not in result
     assert "tags" not in result
